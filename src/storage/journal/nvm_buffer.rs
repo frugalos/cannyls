@@ -117,8 +117,8 @@ impl<N: NonVolatileMemory> JournalNvmBuffer<N> {
             unsafe {
                 // This nonoverlappingness is guranteed by the callers.
                 ptr::copy(
-                    self.write_buf.as_ptr().offset(drop_len as isize), // src
-                    self.write_buf.as_mut_ptr(),                       // dst
+                    self.write_buf.as_ptr().add(drop_len), // src
+                    self.write_buf.as_mut_ptr(),           // dst
                     new_len,
                 );
             }
