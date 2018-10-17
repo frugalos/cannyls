@@ -1,0 +1,27 @@
+[package]
+name = "cannyls"
+version = "0.9.0"
+authors = ["The FrugalOS Developers"]
+description = "Embedded persistent key-value storage optimized for random-access workload and huge-capacity HDD"
+homepage = "https://github.com/frugalos/cannyls"
+repository = "https://github.com/frugalos/cannyls"
+readme = "README.md"
+categories = ["database-implementations"]
+license = "MIT"
+
+[badges]
+travis-ci = {repository = "frugalos/cannyls"}
+
+[dependencies]
+adler32 = "1"
+byteorder = { version = "1", features = ["i128"] }
+fibers = "0.1"
+futures = "0.1"
+libc = "0.2"
+prometrics = "0.1"
+trackable = "0.2"
+uuid = { version = "0.7", features = ["v4"] }
+
+[dev-dependencies]
+fibers_global = "0.1"
+tempdir = "0.3"
