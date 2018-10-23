@@ -20,15 +20,21 @@ pub struct FileNvmBuilder {
     exclusive_lock: bool,
 }
 
+impl Default for FileNvmBuilder {
+    fn default() -> Self {
+        FileNvmBuilder {
+            direct_io: true,
+            exclusive_lock: true,
+        }
+    }
+}
+
 impl FileNvmBuilder {
     /// デフォルト設定で`FileNvmBuilder`インスタンスを作成する
     ///
     /// デフォルトでは、direct_io = trueかつexclusive_lock = trueとなる
     pub fn new() -> Self {
-        FileNvmBuilder {
-            direct_io: true,
-            exclusive_lock: true,
-        }
+        FileNvmBuilder::default()
     }
 
     #[cfg(target_os = "linux")]
@@ -75,9 +81,11 @@ impl FileNvmBuilder {
             if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
                 track_io!(Err(io::Error::last_os_error()))
             } else {
+                println!("exclusive_lock");
                 Ok(())
             }
         } else {
+            println!("does not lock");
             Ok(())
         }
     }
@@ -253,7 +261,7 @@ impl FileNvm {
         Ok(len)
     }
 
-    #[test]
+    #[cfg(test)]
     fn inner(&self) -> &File {
         &self.file
     }
@@ -494,52 +502,60 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn lock_flag() -> i32 {
-        libc::O_SHLOCK | libc::O_EXLOCK
+    fn is_file_lock<F: AsRef<Path>>(_file: &File, path: F) -> bool {
+        use std::process::Command;
+
+        // try to get an exclusive file lock
+        let status = Command::new("/bin/bash")
+            .arg("-c")
+            .arg(format!(
+                "/usr/bin/flock -e -n {} -c echo",
+                path.as_ref().to_str().unwrap()
+            )).status()
+            .expect("failed to execute process");
+
+        !status.success()
     }
     #[cfg(target_os = "macos")]
-    fn lock_flag() -> i32 {
+    fn is_file_lock<F: AsRef<Path>>(file: &File, _path: F) -> bool {
+        use std::os::unix::io::AsRawFd;
+        let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL, 0) };
+
         // The following constant comes from
         // https://github.com/apple/darwin-xnu/blob/master/bsd/sys/fcntl.h#L133
-        0x4_000
+        let lock_flag = 0x4_000;
+
+        (status & lock_flag) == lock_flag
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn lock_flag() -> i32 {
+    fn is_file_lock<F: AsRef<Path>>(_file: &File, _path: F) -> bool {
         panic!("Please add an adequate value for your environment");
     }
 
     #[test]
     fn exclusive_lock_works() -> TestResult {
-        use std::os::unix::io::AsRawFd;
         let dir = track_io!(TempDir::new("cannyls_test"))?;
-        let nvm = track!(FileNvm::create(dir.path().join("foo"), 1024))?;
-
+        let file_path = dir.path().join("foo");
+        let nvm = track!(FileNvm::create(&file_path, 1024))?;
         let file = nvm.inner();
-        let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL, 0) };
 
-        let lock_flag = lock_flag();
-
-        assert_eq!(status & lock_flag, lock_flag);
+        assert!(is_file_lock(file, file_path));
 
         Ok(())
     }
 
     #[test]
     fn disabling_exclusive_lock_works() -> TestResult {
-        use std::os::unix::io::AsRawFd;
         let dir = track_io!(TempDir::new("cannyls_test"))?;
+        let file_path = dir.path().join("bar");
         let nvm = track!(
             FileNvmBuilder::new()
                 .exclusive_lock(false)
-                .create(dir.path().join("foo"), 1024)
+                .create(&file_path, 1024)
         )?;
-
         let file = nvm.inner();
-        let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL, 0) };
 
-        let lock_flag = lock_flag();
-
-        assert_eq!(status & lock_flag, 0);
+        assert!(!is_file_lock(file, file_path));
 
         Ok(())
     }
