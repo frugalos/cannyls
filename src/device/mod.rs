@@ -60,7 +60,7 @@ impl Device {
     /// デフォルト設定でデバイスを起動する.
     ///
     /// 設定を変更したい場合には`DeviceBuilder`を使用すること.
-    pub fn spawn<F, N>(&self, init_storage: F) -> Device
+    pub fn spawn<F, N>(init_storage: F) -> Device
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
