@@ -49,6 +49,43 @@ mod thread;
 ///
 /// [Lump]: ../lump/index.html
 /// [Future]: https://docs.rs/futures/0.1/futures/future/trait.Future.html
+///
+/// # デバイスを安全に停止する方法
+///
+/// `Device::spawn`関数を呼び出すと`Device`インスタンスが結果として返されるが、
+/// 同時に引数で指定されたストレージを管理するためのOSスレッドも起動される。
+///
+/// `Device`インスタンスのドロップ時には、そのデストラクタ内で`Device::stop`メソッドが呼び出され、
+/// 対応する管理スレッドに停止リクエストが発行される。
+/// 注意すべきは、デストラクタ内ではリクエストを発行するのみであり、停止完了を待機することはないという点である。
+/// これは、デストラクタの呼び出し元スレッドが長時間ブロックすることを避けるための挙動である
+///
+/// 通常はこの挙動で問題が発生することはないが、もし対象`Device`でジャーナルメモリバッファが有効になっており、
+/// かつ、`Device`のドロップ直後にプログラムが終了する場合には、ジャーナルメモリバッファの内容が
+/// ディスクに反映される前に、管理スレッドが強制終了されてしまう可能性がある（i.e., 直近の操作内容が失われる）。
+///
+/// これを防ぐためには、以下のように明示的に`Device::stop`を呼び出し上で、`Device`の終了を待機すれば良い:
+/// ```
+/// # extern crate cannyls;
+/// # extern crate futures;
+/// use cannyls::deadline::Deadline;
+/// use cannyls::device::Device;
+/// use cannyls::nvm::MemoryNvm;
+/// use cannyls::storage::Storage;
+/// use futures::Future;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+/// let storage = Storage::create(nvm)?;
+/// let mut device = Device::spawn(|| Ok(storage));
+///
+/// // ...デバイスに対する何らかの操作...
+///
+/// device.stop(Deadline::Immediate);    // 管理スレッドの停止を指示
+/// while !device.poll()?.is_ready() {}  // 停止完了を待機
+/// # Ok(())
+/// # }
+/// ```
 #[must_use]
 #[derive(Debug)]
 pub struct Device {
@@ -60,7 +97,7 @@ impl Device {
     /// デフォルト設定でデバイスを起動する.
     ///
     /// 設定を変更したい場合には`DeviceBuilder`を使用すること.
-    pub fn spawn<F, N>(&self, init_storage: F) -> Device
+    pub fn spawn<F, N>(init_storage: F) -> Device
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
@@ -86,7 +123,11 @@ impl Device {
     /// 衝突し、エラーが発生するかもしれない.
     /// 確実な終了検知が必要なら、アプリケーションが明示的に`Device::stop`を呼び出す必要がある.
     pub fn stop(&self, deadline: Deadline) {
-        self.handle().request().deadline(deadline).stop();
+        self.handle()
+            .request()
+            .wait_for_running()
+            .deadline(deadline)
+            .stop();
     }
 
     /// デバイスの起動を待機するための`Future`を返す.
@@ -434,6 +475,18 @@ mod tests {
             ));
             assert_ne!(v, nvm.to_bytes()); // `journal_sync` により、実際に書き込まれている
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_stop_works() -> TestResult {
+        let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+        let storage = track!(Storage::create(nvm))?;
+        let device = Device::spawn(|| Ok(storage));
+
+        device.stop(Deadline::Immediate); // 管理スレッドの停止を指示
+        track!(execute(device))?; // 停止完了を待機
 
         Ok(())
     }
