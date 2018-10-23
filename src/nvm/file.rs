@@ -10,12 +10,20 @@ use nvm::NonVolatileMemory;
 use storage::StorageHeader;
 use {ErrorKind, Result};
 
+/// `FileNvm`のビルダ
+///
+/// 二つのメンバを持ち、それぞれ次の意味を表す:
+/// direct_io: バッファリングなしI/Oを行うかどうか（Linux: O_DIRECT, Mac: F_NOCACHE）
+/// exclusive_lock: `FileNvm`の実体ファイルに対するアクセスの排他制御を行うかどうか
 pub struct FileNvmBuilder {
     direct_io: bool,
     exclusive_lock: bool,
 }
 
 impl FileNvmBuilder {
+    /// デフォルト設定で`FileNvmBuilder`インスタンスを作成する
+    ///
+    /// デフォルトでは、direct_io = trueかつexclusive_lock = trueとなる
     pub fn new() -> Self {
         FileNvmBuilder {
             direct_io: true,
@@ -78,16 +86,23 @@ impl FileNvmBuilder {
         Ok(())
     }
 
+    /// direct_ioのon/offを設定する
     pub fn direct_io(&mut self, enabled: bool) -> &mut Self {
         self.direct_io = enabled;
         self
     }
 
+    /// exclusive_lockのon/offを設定する
     pub fn exclusive_lock(&mut self, enabled: bool) -> &mut Self {
         self.exclusive_lock = enabled;
         self
     }
 
+    /// 新しい`FileNvm`インスタンスを生成する.
+    ///
+    /// `filepath`が既に存在する場合にはそれを開き、存在しない場合には新規にファイルを作成する.
+    ///
+    /// 返り値のタプルの二番目の値は、ファイルが新規作成されたかどうか (`true`なら新規作成).
     pub fn create_if_absent<P: AsRef<Path>>(
         &mut self,
         filepath: P,
@@ -100,6 +115,7 @@ impl FileNvmBuilder {
         }
     }
 
+    /// ファイルを新規に作成して`FileNvm`インスタンスを生成する.
     pub fn create<P: AsRef<Path>>(&mut self, filepath: P, capacity: u64) -> Result<FileNvm> {
         if let Some(dir) = filepath.as_ref().parent() {
             track_io!(fs::create_dir_all(dir))?;
@@ -112,6 +128,13 @@ impl FileNvmBuilder {
         Ok(FileNvm::with_range(file, 0, capacity))
     }
 
+    /// 既存のファイルを開いて`FileNvm`インスタンスを生成する。
+    ///
+    /// ここでいう既存のファイルとは、以前に `Storage::create` 等で
+    /// 作成済みのlusfファイルを指す。
+    ///
+    /// lusfファイルにはcapacity情報が埋め込まれているので
+    /// createとは異なりcapacity引数を要求しない。
     pub fn open<P: AsRef<Path>>(&mut self, filepath: P) -> Result<FileNvm> {
         let saved_header = track!(StorageHeader::read_from_file(&filepath))?;
         let capacity = saved_header.storage_size();
@@ -143,7 +166,10 @@ pub struct FileNvm {
     view_end: u64,
 }
 impl FileNvm {
-    /// 新しい`FileNvm`インスタンスを生成する.
+    /// デフォルト設定で新しい`FileNvm`インスタンスを生成する.
+    ///
+    /// デフォルト設定では、O_DIRECT (MacではF_NOCACHE）でのバッファリングなしI/Oを行い
+    /// ファイルアクセスに対する排他制御を行う。
     ///
     /// `filepath`が既に存在する場合にはそれを開き、存在しない場合には新規にファイルを作成する.
     ///
@@ -152,12 +178,18 @@ impl FileNvm {
         FileNvmBuilder::new().create_if_absent(filepath, capacity)
     }
 
-    /// ファイルを新規に作成して`FileNvm`インスタンスを生成する.
+    /// デフォルト設定でファイルを新規に作成して`FileNvm`インスタンスを生成する.
+    ///
+    /// デフォルト設定では、O_DIRECT (MacではF_NOCACHE）でのバッファリングなしI/Oを行い
+    /// ファイルアクセスに対する排他制御を行う。
     pub fn create<P: AsRef<Path>>(filepath: P, capacity: u64) -> Result<Self> {
         FileNvmBuilder::new().create(filepath, capacity)
     }
 
-    /// 既存のファイルを開いて`FileNvm`インスタンスを生成する。
+    /// デフォルト設定で既存のファイルを開き`FileNvm`インスタンスを生成する。
+    ///
+    /// デフォルト設定では、O_DIRECT (MacではF_NOCACHE）でのバッファリングなしI/Oを行い
+    /// ファイルアクセスに対する排他制御を行う。
     ///
     /// ここでいう既存のファイルとは、以前に `Storage::create` 等で
     /// 作成済みのlusfファイルを指す。
