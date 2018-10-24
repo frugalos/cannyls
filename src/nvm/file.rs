@@ -81,11 +81,9 @@ impl FileNvmBuilder {
             if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
                 track_io!(Err(io::Error::last_os_error()))
             } else {
-                println!("exclusive_lock");
                 Ok(())
             }
         } else {
-            println!("does not lock");
             Ok(())
         }
     }
@@ -116,24 +114,41 @@ impl FileNvmBuilder {
         filepath: P,
         capacity: u64,
     ) -> Result<(FileNvm, bool)> {
-        if filepath.as_ref().exists() {
-            track!(self.open(filepath)).map(|s| (s, false))
+        let mut options = self.open_options();
+        // OpenOptions::createはファイルが既に存在する場合はそれを開き
+        // 存在しない場合は作成する
+        options.create(true);
+        let file = track_io!(options.open(&filepath))?;
+
+        // metadataのファイルサイズの非ゼロ検査で
+        // 新規作成されたファイルかどうかを判断する
+        let metadata = track_io!(fs::metadata(&filepath))?;
+        if metadata.len() == 0 {
+            // ファイルが新しく作成された
+            self.initialize(file, capacity).map(|s| (s, true))
         } else {
-            track!(self.create(filepath, capacity)).map(|s| (s, true))
+            // 既に存在するファイルなので、格納されているcapacity値を使う
+            let saved_header = track!(StorageHeader::read_from_file(&filepath))?;
+            let capacity = saved_header.storage_size();
+            self.initialize(file, capacity).map(|s| (s, false))
         }
     }
 
     /// ファイルを新規に作成して`FileNvm`インスタンスを生成する.
+    ///
+    /// `filepath`にファイルが存在する場合にはエラーを返す。
+    /// `filepath`にファイルが存在する場合にそれを開きたいならば、
+    /// このメソッドの代わりに`create_if_absent`を用いる。
     pub fn create<P: AsRef<Path>>(&mut self, filepath: P, capacity: u64) -> Result<FileNvm> {
         if let Some(dir) = filepath.as_ref().parent() {
             track_io!(fs::create_dir_all(dir))?;
         }
         let mut options = self.open_options();
-        options.create(true);
+        // OpenOptions::create_newはファイルが存在しない場合だけ作成し
+        // 存在しない場合はエラーとなる。
+        options.create_new(true);
         let file = track_io!(options.open(filepath))?;
-        track!(self.set_exclusive_file_lock_if_flag_is_on(&file))?;
-        track!(self.set_fnocache_if_flag_is_on(&file))?;
-        Ok(FileNvm::with_range(file, 0, capacity))
+        self.initialize(file, capacity)
     }
 
     /// 既存のファイルを開いて`FileNvm`インスタンスを生成する。
@@ -148,6 +163,10 @@ impl FileNvmBuilder {
         let capacity = saved_header.storage_size();
         let options = self.open_options();
         let file = track_io!(options.open(filepath))?;
+        self.initialize(file, capacity)
+    }
+
+    fn initialize(&self, file: File, capacity: u64) -> Result<FileNvm> {
         track!(self.set_exclusive_file_lock_if_flag_is_on(&file))?;
         track!(self.set_fnocache_if_flag_is_on(&file))?;
         Ok(FileNvm::with_range(file, 0, capacity))
@@ -462,10 +481,6 @@ mod tests {
         // https://github.com/apple/darwin-xnu/blob/master/bsd/sys/fcntl.h#L162
         0x4_0000
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn direct_io_flags() -> i32 {
-        panic!("Please add an adequate value for your environment");
-    }
 
     #[test]
     fn direct_io_works() -> TestResult {
@@ -526,10 +541,6 @@ mod tests {
         let lock_flag = 0x4_000;
 
         (status & lock_flag) == lock_flag
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn is_file_lock<F: AsRef<Path>>(_file: &File, _path: F) -> bool {
-        panic!("Please add an adequate value for your environment");
     }
 
     #[test]
