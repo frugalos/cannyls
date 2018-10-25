@@ -12,9 +12,9 @@ use {ErrorKind, Result};
 
 /// `FileNvm`のビルダ
 ///
-/// 二つのメンバを持ち、それぞれ次の意味を表す:
-/// direct_io: バッファリングなしI/Oを行うかどうか（Linux: O_DIRECT, Mac: F_NOCACHE）
-/// exclusive_lock: `FileNvm`の実体ファイルに対するアクセスの排他制御を行うかどうか
+/// `FileNvm`には二つのオプション`direct_io`と`exclusive_lock`が存在する。  
+/// デフォルトでは`direct_io=true`かつ`exclusive_lock=true`の振る舞いをする。  
+/// それぞれのオプション内容については個別のメソッドを参照せよ。
 pub struct FileNvmBuilder {
     direct_io: bool,
     exclusive_lock: bool,
@@ -31,8 +31,6 @@ impl Default for FileNvmBuilder {
 
 impl FileNvmBuilder {
     /// デフォルト設定で`FileNvmBuilder`インスタンスを作成する
-    ///
-    /// デフォルトでは、direct_io = trueかつexclusive_lock = trueとなる
     pub fn new() -> Self {
         FileNvmBuilder::default()
     }
@@ -92,13 +90,26 @@ impl FileNvmBuilder {
         Ok(())
     }
 
-    /// direct_ioのon/offを設定する
+    /// DIRECT IO（バッファリングなしIO）を行うかどうかを設定する。  
+    /// デフォルトではDIRECT IOを行う。
+    /// - `enabled=true`でDIRECT IOを行う。
+    /// - `enabled=false`でDIRECT IOを行わない。
+    ///
+    /// 現状ではLinuxとMacのみで有効なオプションで、それぞれ次を意味する:
+    /// - Linux: O_DIRECTオプションでファイルを開く。
+    /// - Mac: ファイルを開いた後にF_NOCACHEオプションを付与する。
     pub fn direct_io(&mut self, enabled: bool) -> &mut Self {
         self.direct_io = enabled;
         self
     }
 
-    /// exclusive_lockのon/offを設定する
+    /// ファイルに対する排他ロックを行うかどうかを設定する。  
+    /// デフォルトでは排他ロックを行う。
+    /// - `enabled=true`で排他ロックを行う。
+    /// - `enabled=false`で排他ロックを行わない。
+    ///
+    /// 現状ではUnix系で有効なオプションで、次を意味する:  
+    /// - `LOCK_EX`と`LOCK_NB`オプションを用いて`flock`システムコールを呼び出す。
     pub fn exclusive_lock(&mut self, enabled: bool) -> &mut Self {
         self.exclusive_lock = enabled;
         self
@@ -108,7 +119,9 @@ impl FileNvmBuilder {
     ///
     /// `filepath`が既に存在する場合にはそれを開き、存在しない場合には新規にファイルを作成する.
     ///
-    /// 返り値のタプルの二番目の値は、ファイルが新規作成されたかどうか (`true`なら新規作成).
+    /// 返り値のタプルの二番目のbool値は、次を意味する
+    /// - `true`: ファイルが新規作成された、または既にファイルが存在したがそれが0バイトの空ファイルである。
+    /// - `false`: 非空なファイルが存在していた。
     pub fn create_if_absent<P: AsRef<Path>>(
         &mut self,
         filepath: P,
@@ -136,8 +149,8 @@ impl FileNvmBuilder {
 
     /// ファイルを新規に作成して`FileNvm`インスタンスを生成する.
     ///
-    /// `filepath`にファイルが存在する場合にはエラーを返す。
-    /// `filepath`にファイルが存在する場合にそれを開きたいならば、
+    /// `filepath`にファイルが存在する場合にはエラーを返す。  
+    /// `filepath`に（非零バイト）ファイルが存在する場合にそれを開きたいならば、
     /// このメソッドの代わりに`create_if_absent`を用いる。
     pub fn create<P: AsRef<Path>>(&mut self, filepath: P, capacity: u64) -> Result<FileNvm> {
         if let Some(dir) = filepath.as_ref().parent() {
@@ -227,7 +240,7 @@ impl FileNvm {
         FileNvmBuilder::new().open(filepath)
     }
 
-    fn with_range(file: File, start: u64, end: u64) -> FileNvm {
+    fn with_range(file: File, start: u64, end: u64) -> Self {
         FileNvm {
             file,
             cursor_position: start,
@@ -482,7 +495,7 @@ mod tests {
         0x4_0000
     }
 
-    #[test]
+    #[cfg_attr(any(target_os = "linux", target_os = "macos"), test)]
     fn direct_io_works() -> TestResult {
         use std::os::unix::io::AsRawFd;
         let dir = track_io!(TempDir::new("cannyls_test"))?;
@@ -497,7 +510,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[cfg_attr(any(target_os = "linux", target_os = "macos"), test)]
     fn disabling_direct_io_works() -> TestResult {
         use std::os::unix::io::AsRawFd;
         let dir = track_io!(TempDir::new("cannyls_test"))?;
@@ -543,7 +556,7 @@ mod tests {
         (status & lock_flag) == lock_flag
     }
 
-    #[test]
+    #[cfg_attr(any(target_os = "linux", target_os = "macos"), test)]
     fn exclusive_lock_works() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
         let file_path = dir.path().join("foo");
@@ -555,7 +568,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[cfg_attr(any(target_os = "linux", target_os = "macos"), test)]
     fn disabling_exclusive_lock_works() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
         let file_path = dir.path().join("bar");
