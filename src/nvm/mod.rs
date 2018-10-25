@@ -4,7 +4,7 @@
 //! 永続化領域を提供する.
 use std::io::{Read, Seek, SeekFrom, Write};
 
-pub use self::file::FileNvm;
+pub use self::file::{FileNvm, FileNvmBuilder};
 pub use self::memory::MemoryNvm;
 pub use self::shared_memory::SharedMemoryNvm;
 
