@@ -90,10 +90,10 @@ impl FileNvmBuilder {
         Ok(())
     }
 
-    /// DIRECT IO（バッファリングなしIO）を行うかどうかを設定する。  
-    /// デフォルトではDIRECT IOを行う。
-    /// - `enabled=true`でDIRECT IOを行う。
-    /// - `enabled=false`でDIRECT IOを行わない。
+    /// Direct I/O（バッファリングなしIO）を行うかどうかを設定する。  
+    /// デフォルトではDirect I/Oを行う。
+    /// - `enabled=true`でDirect I/Oを行う。
+    /// - `enabled=false`でDirect I/Oを行わない。
     ///
     /// 現状ではLinuxとMacのみで有効なオプションで、それぞれ次を意味する:
     /// - Linux: O_DIRECTオプションでファイルを開く。
