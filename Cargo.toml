@@ -1,6 +1,6 @@
 [package]
 name = "cannyls"
-version = "0.9.0"
+version = "0.9.1"
 authors = ["The FrugalOS Developers"]
 description = "Embedded persistent key-value storage optimized for random-access workload and huge-capacity HDD"
 homepage = "https://github.com/frugalos/cannyls"
