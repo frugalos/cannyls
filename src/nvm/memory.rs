@@ -74,11 +74,11 @@ impl NonVolatileMemory for MemoryNvm {
             ErrorKind::InvalidInput
         );
         track_assert!(position <= self.capacity(), ErrorKind::InvalidInput);
-        let left = self.memory.get_mut().drain(..position as usize).collect();
-        let left = MemoryNvm::new(left);
+        let right = self.memory.get_mut().split_off(position as usize);
+        let right = MemoryNvm::new(right);
 
         self.memory.set_position(0);
-        Ok((left, self))
+        Ok((self, right))
     }
 }
 impl Seek for MemoryNvm {
