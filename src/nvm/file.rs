@@ -115,6 +115,28 @@ impl FileNvmBuilder {
         self
     }
 
+    fn file_open_with_error_info<P: AsRef<Path>>(
+        &self,
+        options: &fs::OpenOptions,
+        filepath: &P,
+    ) -> Result<File> {
+        let file = track_io!(options.open(&filepath));
+
+        match file {
+            Err(error) => {
+                if cfg!(target_os = "linux") && self.direct_io {
+                    eprintln!(
+                        "[CannyLS Error] We failed to open file {:?} with O_DIRECT option.",
+                        filepath.as_ref()
+                    );
+                    eprintln!("[CannyLS Error] Possibly, your environment does nont support O_DIRECT option.");
+                }
+                Err(error)
+            }
+            Ok(file) => Ok(file),
+        }
+    }
+
     /// 新しい`FileNvm`インスタンスを生成する.
     ///
     /// `filepath`が既に存在する場合にはそれを開き、存在しない場合には新規にファイルを作成する.
@@ -131,7 +153,7 @@ impl FileNvmBuilder {
         // OpenOptions::createはファイルが既に存在する場合はそれを開き
         // 存在しない場合は作成する
         options.create(true);
-        let file = track_io!(options.open(&filepath))?;
+        let file = self.file_open_with_error_info(&options, &filepath)?;
 
         // metadataのファイルサイズの非ゼロ検査で
         // 新規作成されたファイルかどうかを判断する
@@ -160,7 +182,7 @@ impl FileNvmBuilder {
         // OpenOptions::create_newはファイルが存在しない場合だけ作成し
         // 存在しない場合はエラーとなる。
         options.create_new(true);
-        let file = track_io!(options.open(filepath))?;
+        let file = self.file_open_with_error_info(&options, &filepath)?;
         self.initialize(file, capacity)
     }
 
@@ -175,7 +197,7 @@ impl FileNvmBuilder {
         let saved_header = track!(StorageHeader::read_from_file(&filepath))?;
         let capacity = saved_header.storage_size();
         let options = self.open_options();
-        let file = track_io!(options.open(filepath))?;
+        let file = self.file_open_with_error_info(&options, &filepath)?;
         self.initialize(file, capacity)
     }
 
