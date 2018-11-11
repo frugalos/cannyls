@@ -453,7 +453,7 @@ mod tests {
             let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
             let _ = execute(d.request().wait_for_running().list());
-            track!(execute(d.request().put(id(1234), embedded_data(b"hoge"))));
+            track!(execute(d.request().put(id(1234), embedded_data(b"hoge"))))?;
             assert_eq!(v, nvm.to_bytes()); // ジャーナルバッファ上に値があり、実際に書き込まれていない
         }
 
@@ -472,7 +472,7 @@ mod tests {
                 d.request()
                     .journal_sync()
                     .put(id(1234), embedded_data(b"hoge"))
-            ));
+            ))?;
             assert_ne!(v, nvm.to_bytes()); // `journal_sync` により、実際に書き込まれている
         }
 

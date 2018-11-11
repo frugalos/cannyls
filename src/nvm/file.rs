@@ -124,11 +124,11 @@ impl FileNvmBuilder {
     ) -> Result<File> {
         use std::os::unix::fs::OpenOptionsExt;
 
-        let file_orig = track_io!(options.open(&filepath));
+        let open_result = track_io!(options.open(&filepath));
 
         // If we succeed on opening the file `filepath`, we return it.
-        if file_orig.is_ok() {
-            return file_orig;
+        if open_result.is_ok() {
+            return open_result;
         }
 
         // Otherwise, we check why opening the file `filepath` failed.
@@ -137,26 +137,23 @@ impl FileNvmBuilder {
             if do_create {
                 // failed to file open
                 return track!(
-                    file_orig,
-                    format!(
-                        "[CannyLS Error] We failed to create the file {:?}.",
-                        filepath.as_ref()
-                    )
+                    open_result,
+                    format!("We failed to create the file {:?}.", filepath.as_ref())
                 );
             } else {
                 // `do_create == false` means to open an existing file;
                 // however, now the file `filepath` does not exist.
                 return track!(
-                    file_orig,
+                    open_result,
                     format!(
-                        "[CannyLS Error] The file {:?} does not exist and failed to open it.",
+                        "The file {:?} does not exist and failed to open it.",
                         filepath.as_ref()
                     )
                 );
             }
         }
 
-        // Next, we check if the file `filepath` can be opened with `O_DIRECT` option.
+        // Next, we check if the file `filepath` can be opened without `O_DIRECT` option.
         let mut options = fs::OpenOptions::new();
         options.read(true).write(true).create(false);
 
@@ -164,13 +161,11 @@ impl FileNvmBuilder {
         if file.is_err() {
             return track!(
                 file,
-                format!(
-                    "[CannyLS Error] We cannot open the file {:?}.",
-                    filepath.as_ref()
-                )
+                format!("We cannot open the file {:?}.", filepath.as_ref())
             );
         }
 
+        // Finally, we check if the file `filepath` can be opened with `O_DIRECT` option.
         if self.direct_io {
             options.custom_flags(libc::O_DIRECT);
             let file = track_io!(options.open(&filepath));
@@ -178,7 +173,7 @@ impl FileNvmBuilder {
                 return track!(
                     file,
                     format!(
-                        "[CannyLS Error] We cannot open the file {:?} with O_DIRECT.",
+                        "We cannot open the file {:?} with O_DIRECT.",
                         filepath.as_ref()
                     )
                 );
@@ -186,7 +181,7 @@ impl FileNvmBuilder {
         }
 
         // Strange case; so, we return the originanl error information.
-        file_orig
+        open_result
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -215,7 +210,7 @@ impl FileNvmBuilder {
         // OpenOptions::createはファイルが既に存在する場合はそれを開き
         // 存在しない場合は作成する
         options.create(true);
-        let file = self.file_open_with_error_info(true, &options, &filepath)?;
+        let file = track!(self.file_open_with_error_info(true, &options, &filepath))?;
 
         // metadataのファイルサイズの非ゼロ検査で
         // 新規作成されたファイルかどうかを判断する
