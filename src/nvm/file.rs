@@ -138,17 +138,16 @@ impl FileNvmBuilder {
                 // failed to file open
                 return track!(
                     open_result,
-                    format!("We failed to create the file {:?}.", filepath.as_ref())
+                    "We failed to create the file {:?}.",
+                    filepath.as_ref()
                 );
             } else {
                 // `do_create == false` means to open an existing file;
                 // however, now the file `filepath` does not exist.
                 return track!(
                     open_result,
-                    format!(
-                        "The file {:?} does not exist and failed to open it.",
-                        filepath.as_ref()
-                    )
+                    "The file {:?} does not exist and failed to open it.",
+                    filepath.as_ref()
                 );
             }
         }
@@ -161,7 +160,8 @@ impl FileNvmBuilder {
         if file.is_err() {
             return track!(
                 file,
-                format!("We cannot open the file {:?}.", filepath.as_ref())
+                "We cannot open the file {:?}.",
+                filepath.as_ref()
             );
         }
 
@@ -172,10 +172,8 @@ impl FileNvmBuilder {
             if file.is_err() {
                 return track!(
                     file,
-                    format!(
-                        "We cannot open the file {:?} with O_DIRECT.",
-                        filepath.as_ref()
-                    )
+                    "We cannot open the file {:?} with O_DIRECT.",
+                    filepath.as_ref()
                 );
             }
         }
