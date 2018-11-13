@@ -115,6 +115,83 @@ impl FileNvmBuilder {
         self
     }
 
+    #[cfg(target_os = "linux")]
+    fn file_open_with_error_info<P: AsRef<Path>>(
+        &self,
+        do_create: bool, // This denoes whether or not the next argument `options` allows file creating.
+        options: &fs::OpenOptions,
+        filepath: &P,
+    ) -> Result<File> {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let open_result = track_io!(options.open(&filepath));
+
+        // If we succeed on opening the file `filepath`, we return it.
+        if open_result.is_ok() {
+            return open_result;
+        }
+
+        // Otherwise, we check why opening the file `filepath` failed.
+        // First, we check the existence of the file `filepath`.
+        if !std::path::Path::new(filepath.as_ref()).exists() {
+            if do_create {
+                // failed to file open
+                return track!(
+                    open_result,
+                    "We failed to create the file {:?}.",
+                    filepath.as_ref()
+                );
+            } else {
+                // `do_create == false` means to open an existing file;
+                // however, now the file `filepath` does not exist.
+                return track!(
+                    open_result,
+                    "The file {:?} does not exist and failed to open it.",
+                    filepath.as_ref()
+                );
+            }
+        }
+
+        // Next, we check if the file `filepath` can be opened without `O_DIRECT` option.
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(false);
+
+        let file = track_io!(options.open(&filepath));
+        if file.is_err() {
+            return track!(
+                file,
+                "We cannot open the file {:?}.",
+                filepath.as_ref()
+            );
+        }
+
+        // Finally, we check if the file `filepath` can be opened with `O_DIRECT` option.
+        if self.direct_io {
+            options.custom_flags(libc::O_DIRECT);
+            let file = track_io!(options.open(&filepath));
+            if file.is_err() {
+                return track!(
+                    file,
+                    "We cannot open the file {:?} with O_DIRECT.",
+                    filepath.as_ref()
+                );
+            }
+        }
+
+        // Strange case; so, we return the originanl error information.
+        open_result
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn file_open_with_error_info<P: AsRef<Path>>(
+        &self,
+        _do_create: bool,
+        options: &fs::OpenOptions,
+        filepath: &P,
+    ) -> Result<File> {
+        track_io!(options.open(&filepath))
+    }
+
     /// 新しい`FileNvm`インスタンスを生成する.
     ///
     /// `filepath`が既に存在する場合にはそれを開き、存在しない場合には新規にファイルを作成する.
@@ -131,7 +208,7 @@ impl FileNvmBuilder {
         // OpenOptions::createはファイルが既に存在する場合はそれを開き
         // 存在しない場合は作成する
         options.create(true);
-        let file = track_io!(options.open(&filepath))?;
+        let file = track!(self.file_open_with_error_info(true, &options, &filepath))?;
 
         // metadataのファイルサイズの非ゼロ検査で
         // 新規作成されたファイルかどうかを判断する
@@ -160,7 +237,7 @@ impl FileNvmBuilder {
         // OpenOptions::create_newはファイルが存在しない場合だけ作成し
         // 存在しない場合はエラーとなる。
         options.create_new(true);
-        let file = track_io!(options.open(filepath))?;
+        let file = self.file_open_with_error_info(true, &options, &filepath)?;
         self.initialize(file, capacity)
     }
 
@@ -175,7 +252,7 @@ impl FileNvmBuilder {
         let saved_header = track!(StorageHeader::read_from_file(&filepath))?;
         let capacity = saved_header.storage_size();
         let options = self.open_options();
-        let file = track_io!(options.open(filepath))?;
+        let file = self.file_open_with_error_info(false, &options, &filepath)?;
         self.initialize(file, capacity)
     }
 
