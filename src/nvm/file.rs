@@ -158,11 +158,7 @@ impl FileNvmBuilder {
 
         let file = track_io!(options.open(&filepath));
         if file.is_err() {
-            return track!(
-                file,
-                "We cannot open the file {:?}.",
-                filepath.as_ref()
-            );
+            return track!(file, "We cannot open the file {:?}.", filepath.as_ref());
         }
 
         // Finally, we check if the file `filepath` can be opened with `O_DIRECT` option.

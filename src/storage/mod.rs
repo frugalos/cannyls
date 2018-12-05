@@ -32,7 +32,7 @@ use std::ops::Range;
 use Result;
 
 mod address;
-mod allocator;
+pub mod allocator;
 mod builder;
 mod data_region;
 mod header;

@@ -1,3 +1,5 @@
+//! Free Portion
+
 use std::cmp;
 
 use super::U24;
@@ -10,19 +12,25 @@ use storage::Address;
 /// その制約上、一つのインスタンスで表現可能な長さは24bit幅の範囲の制限されている.
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FreePortion(u64);
+
+#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 impl FreePortion {
+    /// add comment
     pub fn new(offset: Address, len: U24) -> Self {
         FreePortion(offset.as_u64() | (u64::from(len) << 40))
     }
 
+    /// add comment
     pub fn start(self) -> Address {
         Address::from_u64(self.0 & Address::MAX).unwrap()
     }
 
+    /// add comment
     pub fn end(self) -> Address {
         self.start() + Address::from(self.len())
     }
 
+    /// add comment
     pub fn len(self) -> U24 {
         (self.0 >> 40) as U24
     }

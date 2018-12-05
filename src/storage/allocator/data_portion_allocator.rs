@@ -1,3 +1,5 @@
+//! Data Portion
+
 use std::cmp;
 use std::collections::BTreeSet;
 use std::collections::Bound::{Excluded, Included, Unbounded};
