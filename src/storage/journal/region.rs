@@ -311,11 +311,30 @@ where
             return Ok(());
         }
 
+        // GC用のキュー(gc_queue)に、ring_bufferからgc_queue_sizeエントリを「複製」する。
+        // 複製の詳細な意味合いとしては、unreleased headを動かさずに、headだけを動かす。
+        //
+        // gc_queue_sizeは、デフォルトでは0x1000すなわち4096エントリである
+        // 参考: `storage/journal/options.rs`
         for result in track!(self.ring_buffer.dequeue_iter())?.take(self.options.gc_queue_size) {
             let entry = track!(result)?;
             self.gc_queue.push_back(entry);
         }
 
+        // GC用のキューが空でない場合に、先頭要素の位置を永続化する。
+        // 注意1: 先頭要素位置は、for-loop開始前のhead位置に他ならない
+        // 注意2: この永続化が成功すると、メモリ上のhead位置と、ディスク上で復元できるhead位置がズレる
+        //
+        // 注意2に関する詳細:
+        // GC用のキューが空でないということは、直上のfor-loopにおいて
+        // dequeue_iter()で得られるイテレータに対するnextメソッドの呼び出しで
+        // メモリ上のヘッド位置が進んでしまっていることを意味する。
+        //
+        // その進んだヘッド位置を永続化してしまうと、
+        // プログラムクラッシュからの再起動時に
+        // GC用キューに移したものの検証されていないエントリたちが失われてしまう。
+        //
+        // 次のfill_gc_queueが呼び出された際に、現在のメモリ上のhead位置が、ディスクに永続化されることになる。
         if let Some(ring_buffer_head) = self.gc_queue.front().map(|x| x.start.as_u64()) {
             let header = JournalHeader { ring_buffer_head };
             track!(self.header_region.write_header(&header))?;
