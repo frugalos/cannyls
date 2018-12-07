@@ -58,6 +58,7 @@ impl BlockSize {
     /// assert_eq!(BlockSize::new(256).err().map(|e| *e.kind()), Some(ErrorKind::InvalidInput));
     /// assert_eq!(BlockSize::new(513).err().map(|e| *e.kind()), Some(ErrorKind::InvalidInput));
     /// ```
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(block_size: u16) -> Result<Self> {
         track_assert!(block_size >= Self::MIN, ErrorKind::InvalidInput);
         track_assert_eq!(block_size % Self::MIN, 0, ErrorKind::InvalidInput);

@@ -867,12 +867,14 @@ impl StorageMetrics {
                 .label(
                     "version",
                     &format!("{}.{}", header.major_version, header.minor_version),
-                ).label("block_size", &header.block_size.as_u16().to_string())
+                )
+                .label("block_size", &header.block_size.as_u16().to_string())
                 .label("uuid", &header.instance_uuid.to_string())
                 .label(
                     "journal_region_size",
                     &header.journal_region_size.to_string(),
-                ).label("data_region_size", &header.data_region_size.to_string())
+                )
+                .label("data_region_size", &header.data_region_size.to_string())
                 .initial_value(1.0)
                 .finish()
                 .expect("Never fails"),
