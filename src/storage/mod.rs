@@ -38,7 +38,7 @@ mod data_region;
 mod header;
 mod index;
 mod journal;
-mod portion;
+pub mod portion;
 
 /// ストレージの先頭に書き込まれるマジックナンバー.
 ///
