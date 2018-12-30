@@ -64,9 +64,18 @@ impl DataPortionAllocator {
             len: 0,
         };
         portions.push(sentinel);
+        // アドレスに基づいて昇順ソートを行う
         portions.sort();
+        // 昇順ソート後にreverseを行うため
+        // 先頭程startに大きな値を持つDataPortionがくる
         portions.reverse();
+        // Q. 下の `while portion.end().as_u64() < tail` をみるに
+        // portionsのソートはendベースで行うべきではないか？  
+        // ２つのdata portion A, Bについて、A <= B だが
+        // A.end() <= B.end() でないものがあるとき、panicしないか？
 
+        // 変数tailの意味は次の通り:
+        // tail位置には値が書き込めない・書き込まれている、すなわち空いてはいない。
         let mut tail = metrics.capacity_bytes / block_size;
         let mut allocator = DataPortionAllocator {
             size_to_free: BTreeSet::new(),
@@ -75,10 +84,15 @@ impl DataPortionAllocator {
         };
         for portion in portions {
             track_assert!(portion.end().as_u64() <= tail, ErrorKind::InvalidInput);
-            while portion.end().as_u64() < tail {
-                let delta = tail - portion.end().as_u64();
-                let size = cmp::min(0xFF_FFFF, delta) as U24;
 
+            // endはexclusiveであることに注意する。
+            // すなわち、endの手前まではデータが詰まっているが、endにはデータがない
+            while portion.end().as_u64() < tail {
+                let delta = tail - portion.end().as_u64(); // いま着目しているportionの後ろ側にある空きブロック数
+                let size = cmp::min(0xFF_FFFF, delta) as U24; // 最大でも24バイト表現なので切り詰めを行う
+
+                // tail-size位置 から size分 の空き容量があることが分かっているので
+                // これを追加する
                 tail -= u64::from(size);
                 let free = FreePortion::new(Address::from_u64(tail).unwrap(), size);
                 allocator.add_free_portion(free);

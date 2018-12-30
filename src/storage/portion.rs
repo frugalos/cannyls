@@ -14,6 +14,8 @@ pub struct DataPortion {
 }
 impl DataPortion {
     /// 部分領域の終端位置を返す.
+    /// 注意: DataPortionは [start, end) の領域を用いるため、
+    /// end部には書き込みは行われていない。
     pub fn end(&self) -> Address {
         self.start + Address::from(u32::from(self.len))
     }
