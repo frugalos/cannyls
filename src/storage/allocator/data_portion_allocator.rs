@@ -172,7 +172,7 @@ impl DataPortionAllocator {
             }
         }
 
-        // 「`portion`の終端」に一致する終端を持つportion `next` を探す。
+        // 「`portion`の終端」に一致する始端を持つportion `next` を探す。
         // もし存在するなら、 portion next の並びでmerge可能である。
         let key = FreePortion::new(portion.end(), 0);
         if let Some(next) = self
@@ -181,7 +181,9 @@ impl DataPortionAllocator {
             .nth(0)
             .map(|p| p.0)
         {
-            if portion.checked_extend(next.len()) {
+            // `next`については`portion.end < next.end`を満たす最小のポーションということしか分かっていない。
+            // portion.end == next.start かどうかを確認する必要がある。
+            if next.start() == portion.end() && portion.checked_extend(next.len()) {
                 self.delete_free_portion(next); // nextの情報は不要なので削除
             }
         }
