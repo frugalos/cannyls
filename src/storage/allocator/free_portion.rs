@@ -15,7 +15,7 @@ use storage::Address;
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FreePortion(u64);
 
-#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
+#[allow(clippy::len_without_is_empty)]
 impl FreePortion {
     /// 空き領域の開始位置 `offset` と 長さ `len` からインスタンスを作る。
     pub fn new(offset: Address, len: U24) -> Self {
