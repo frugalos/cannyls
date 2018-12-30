@@ -507,10 +507,9 @@ mod tests {
 
         let mut file = track!(FileNvm::create(dir.path().join("foo"), capacity))?;
         assert!(file.write_all(&aligned_bytes(&[2; 2048][..])).is_err()); // キャパシティ超過
-        assert!(
-            file.write_all(&aligned_bytes(&[3; 500][..])[..500])
-                .is_err()
-        ); // アライメントが不正
+        assert!(file
+            .write_all(&aligned_bytes(&[3; 500][..])[..500])
+            .is_err()); // アライメントが不正
         Ok(())
     }
 
@@ -587,11 +586,9 @@ mod tests {
     fn disabling_direct_io_works() -> TestResult {
         use std::os::unix::io::AsRawFd;
         let dir = track_io!(TempDir::new("cannyls_test"))?;
-        let nvm = track!(
-            FileNvmBuilder::new()
-                .direct_io(false)
-                .create(dir.path().join("foo"), 1024)
-        )?;
+        let nvm = track!(FileNvmBuilder::new()
+            .direct_io(false)
+            .create(dir.path().join("foo"), 1024))?;
 
         let file = nvm.inner();
         let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL, 0) };
@@ -612,7 +609,8 @@ mod tests {
             .arg(format!(
                 "/usr/bin/flock -e -n {} -c echo",
                 path.as_ref().to_str().unwrap()
-            )).status()
+            ))
+            .status()
             .expect("failed to execute process");
 
         !status.success()
@@ -645,11 +643,9 @@ mod tests {
     fn disabling_exclusive_lock_works() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
         let file_path = dir.path().join("bar");
-        let nvm = track!(
-            FileNvmBuilder::new()
-                .exclusive_lock(false)
-                .create(&file_path, 1024)
-        )?;
+        let nvm = track!(FileNvmBuilder::new()
+            .exclusive_lock(false)
+            .create(&file_path, 1024))?;
         let file = nvm.inner();
 
         assert!(!is_file_lock(file, file_path));

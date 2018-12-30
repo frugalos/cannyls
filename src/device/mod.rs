@@ -444,11 +444,9 @@ mod tests {
     fn journal_sync_works() -> TestResult {
         {
             let nvm = SharedMemoryNvm::new(vec![0; 1024 * 1024]);
-            let storage = track!(
-                StorageBuilder::new()
-                    .journal_region_ratio(0.99)
-                    .create(nvm.clone())
-            )?;
+            let storage = track!(StorageBuilder::new()
+                .journal_region_ratio(0.99)
+                .create(nvm.clone()))?;
             let v = nvm.to_bytes();
             let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
@@ -459,11 +457,9 @@ mod tests {
 
         {
             let nvm = SharedMemoryNvm::new(vec![0; 4 * 1024]);
-            let storage = track!(
-                StorageBuilder::new()
-                    .journal_region_ratio(0.5)
-                    .create(nvm.clone())
-            )?;
+            let storage = track!(StorageBuilder::new()
+                .journal_region_ratio(0.5)
+                .create(nvm.clone()))?;
             let v = nvm.to_bytes();
             let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();

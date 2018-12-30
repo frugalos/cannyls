@@ -54,6 +54,7 @@ impl Command {
 #[derive(Debug)]
 pub struct AsyncResult<T>(oneshot::Monitor<T, Error>);
 impl<T> AsyncResult<T> {
+    #[allow(clippy::new_ret_no_self)]
     fn new() -> (AsyncReply<T>, Self) {
         let (tx, rx) = oneshot::monitor();
         (AsyncReply(tx), AsyncResult(rx))
@@ -63,11 +64,12 @@ impl<T> Future for AsyncResult<T> {
     type Item = T;
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        track!(self.0.poll().map_err(|e| e.unwrap_or_else(|| {
-            ErrorKind::DeviceTerminated
+        track!(self
+            .0
+            .poll()
+            .map_err(|e| e.unwrap_or_else(|| ErrorKind::DeviceTerminated
                 .cause("monitoring channel disconnected")
-                .into()
-        })))
+                .into())))
     }
 }
 
@@ -88,6 +90,7 @@ pub struct PutLump {
     reply: AsyncReply<bool>,
 }
 impl PutLump {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         lump_id: LumpId,
         lump_data: LumpData,
@@ -126,6 +129,7 @@ pub struct GetLump {
     reply: AsyncReply<Option<LumpData>>,
 }
 impl GetLump {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(lump_id: LumpId, deadline: Deadline) -> (Self, AsyncResult<Option<LumpData>>) {
         let (reply, result) = AsyncResult::new();
         let command = GetLump {
@@ -150,6 +154,7 @@ pub struct HeadLump {
     reply: AsyncReply<Option<LumpHeader>>,
 }
 impl HeadLump {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(lump_id: LumpId, deadline: Deadline) -> (Self, AsyncResult<Option<LumpHeader>>) {
         let (reply, result) = AsyncResult::new();
         let command = HeadLump {
@@ -175,6 +180,7 @@ pub struct DeleteLump {
     reply: AsyncReply<bool>,
 }
 impl DeleteLump {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         lump_id: LumpId,
         deadline: Deadline,
@@ -208,6 +214,7 @@ pub struct DeleteLumpRange {
     reply: AsyncReply<Vec<LumpId>>,
 }
 impl DeleteLumpRange {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         range: Range<LumpId>,
         deadline: Deadline,
@@ -239,6 +246,7 @@ pub struct ListLump {
     reply: AsyncReply<Vec<LumpId>>,
 }
 impl ListLump {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(deadline: Deadline) -> (Self, AsyncResult<Vec<LumpId>>) {
         let (reply, result) = AsyncResult::new();
         let command = ListLump { deadline, reply };
@@ -256,6 +264,7 @@ pub struct ListLumpRange {
     reply: AsyncReply<Vec<LumpId>>,
 }
 impl ListLumpRange {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(range: Range<LumpId>, deadline: Deadline) -> (Self, AsyncResult<Vec<LumpId>>) {
         let (reply, result) = AsyncResult::new();
         let command = ListLumpRange {

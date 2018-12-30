@@ -140,6 +140,7 @@ impl LumpData {
     /// # Errors
     ///
     /// データのサイズが`MAX_SIZE`を超えている場合は、`ErrorKind::InvalidInput`エラーが返される.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(data: Vec<u8>) -> Result<Self> {
         track_assert!(
             data.len() <= LumpData::MAX_SIZE,

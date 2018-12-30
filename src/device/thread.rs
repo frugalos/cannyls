@@ -237,11 +237,12 @@ impl Future for DeviceThreadMonitor {
     type Item = ();
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        track!(self.0.poll().map_err(|e| e.unwrap_or_else(|| {
-            ErrorKind::DeviceTerminated
+        track!(self
+            .0
+            .poll()
+            .map_err(|e| e.unwrap_or_else(|| ErrorKind::DeviceTerminated
                 .cause("`DeviceThread` terminated unintentionally")
-                .into()
-        })))
+                .into())))
     }
 }
 

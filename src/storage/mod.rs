@@ -197,10 +197,9 @@ where
         let updated = track!(self.delete_if_exists(lump_id, false))?;
         match data.as_inner() {
             LumpDataInner::JournalRegion(data) => {
-                track!(
-                    self.journal_region
-                        .records_embed(&mut self.lump_index, lump_id, data)
-                )?;
+                track!(self
+                    .journal_region
+                    .records_embed(&mut self.lump_index, lump_id, data))?;
             }
             LumpDataInner::DataRegion(data) => {
                 track!(self.put_lump_to_data_region(lump_id, data))?;
@@ -251,10 +250,9 @@ where
             }
         }
 
-        track!(
-            self.journal_region
-                .records_delete_range(&mut self.lump_index, range)
-        )?;
+        track!(self
+            .journal_region
+            .records_delete_range(&mut self.lump_index, range))?;
 
         Ok(targets)
     }
@@ -348,14 +346,13 @@ where
         data: &DataRegionLumpData,
     ) -> Result<()> {
         let portion = track!(self.data_region.put(data))?;
-        track!(
-            self.journal_region
-                .records_put(&mut self.lump_index, lump_id, portion)
-                .map_err(|e| {
-                    self.data_region.delete(portion);
-                    e
-                })
-        )?;
+        track!(self
+            .journal_region
+            .records_put(&mut self.lump_index, lump_id, portion)
+            .map_err(|e| {
+                self.data_region.delete(portion);
+                e
+            }))?;
         self.lump_index
             .insert(lump_id.clone(), Portion::Data(portion));
         Ok(())
@@ -365,10 +362,9 @@ where
         if let Some(portion) = self.lump_index.remove(lump_id) {
             self.metrics.delete_lumps.increment();
             if do_record {
-                track!(
-                    self.journal_region
-                        .records_delete(&mut self.lump_index, lump_id,)
-                )?;
+                track!(self
+                    .journal_region
+                    .records_delete(&mut self.lump_index, lump_id,))?;
             }
             if let Portion::Data(portion) = portion {
                 self.data_region.delete(portion);
@@ -548,45 +544,37 @@ mod tests {
         let nvm_block_size = track!(BlockSize::new(1024))?;
         let storage_block_size = track!(BlockSize::new(1024))?;
 
-        let storage = track!(
-            StorageBuilder::new()
-                .block_size(storage_block_size)
-                .create(memory_nvm(nvm_block_size))
-        )?;
+        let storage = track!(StorageBuilder::new()
+            .block_size(storage_block_size)
+            .create(memory_nvm(nvm_block_size)))?;
         assert_eq!(storage.header().block_size, storage_block_size);
 
         // [OK] ストレージがNVMのブロックサイズを包含する
         let nvm_block_size = track!(BlockSize::new(512))?;
         let storage_block_size = track!(BlockSize::new(1024))?;
 
-        let storage = track!(
-            StorageBuilder::new()
-                .block_size(storage_block_size)
-                .create(memory_nvm(nvm_block_size))
-        )?;
+        let storage = track!(StorageBuilder::new()
+            .block_size(storage_block_size)
+            .create(memory_nvm(nvm_block_size)))?;
         assert_eq!(storage.header().block_size, storage_block_size);
 
         // [NG] NVMのブロックサイズが、ストレージのブロックサイズよりも大きい
         let nvm_block_size = track!(BlockSize::new(1024))?;
         let storage_block_size = track!(BlockSize::new(512))?;
 
-        assert!(
-            StorageBuilder::new()
-                .block_size(storage_block_size)
-                .create(memory_nvm(nvm_block_size))
-                .is_err()
-        );
+        assert!(StorageBuilder::new()
+            .block_size(storage_block_size)
+            .create(memory_nvm(nvm_block_size))
+            .is_err());
 
         // [NG] ストレージのブロック境界が、NVMのブロック境界に揃っていない
         let nvm_block_size = track!(BlockSize::new(1024))?;
         let storage_block_size = track!(BlockSize::new(1536))?;
 
-        assert!(
-            StorageBuilder::new()
-                .block_size(storage_block_size)
-                .create(memory_nvm(nvm_block_size))
-                .is_err()
-        );
+        assert!(StorageBuilder::new()
+            .block_size(storage_block_size)
+            .create(memory_nvm(nvm_block_size))
+            .is_err());
 
         Ok(())
     }
@@ -597,12 +585,10 @@ mod tests {
         let initial_nvm_block_size = track!(BlockSize::new(1536))?;
         let storage_block_size = track!(BlockSize::new(1536))?;
         let mut nvm = memory_nvm(initial_nvm_block_size);
-        assert!(
-            StorageBuilder::new()
-                .block_size(storage_block_size)
-                .create(nvm.clone())
-                .is_ok()
-        );
+        assert!(StorageBuilder::new()
+            .block_size(storage_block_size)
+            .create(nvm.clone())
+            .is_ok());
 
         // [OK]: NVMとストレージのブロックサイズが等しい
         let storage = track!(Storage::open(nvm.clone()))?;

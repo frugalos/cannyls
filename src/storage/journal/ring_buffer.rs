@@ -224,6 +224,7 @@ pub struct RestoredEntries<'a, N: 'a + NonVolatileMemory> {
     metrics: &'a JournalQueueMetrics,
 }
 impl<'a, N: 'a + NonVolatileMemory> RestoredEntries<'a, N> {
+    #[allow(clippy::new_ret_no_self)]
     fn new(ring: &'a mut JournalRingBuffer<N>) -> Result<Self> {
         // 生成直後の呼び出しかどうかを簡易チェック
         track_assert_eq!(
@@ -276,6 +277,7 @@ pub struct DequeuedEntries<'a, N: 'a + NonVolatileMemory> {
     metrics: &'a JournalQueueMetrics,
 }
 impl<'a, N: 'a + NonVolatileMemory> DequeuedEntries<'a, N> {
+    #[allow(clippy::new_ret_no_self)]
     fn new(ring: &'a mut JournalRingBuffer<N>) -> Result<Self> {
         track_io!(ring.nvm.seek(SeekFrom::Start(ring.head)))?;
         Ok(DequeuedEntries {
