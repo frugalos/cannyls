@@ -64,15 +64,9 @@ impl DataPortionAllocator {
             len: 0,
         };
         portions.push(sentinel);
-        // アドレスに基づいて昇順ソートを行う
-        portions.sort();
-        // 昇順ソート後にreverseを行うため
-        // 先頭程startに大きな値を持つDataPortionがくる
-        portions.reverse();
-        // Q. 下の `while portion.end().as_u64() < tail` をみるに
-        // portionsのソートはendベースで行うべきではないか？  
-        // ２つのdata portion A, Bについて、A <= B だが
-        // A.end() <= B.end() でないものがあるとき、panicしないか？
+        // DataPortionの終端を用いて降順ソートを行う。
+        // すなわち、ソート後は、先頭であればあるほどend()の値は大きい。
+        portions.sort_by(|a: &DataPortion, b: &DataPortion| b.end().cmp(&a.end()));
 
         // 変数tailの意味は次の通り:
         // tail位置には値が書き込めない・書き込まれている、すなわち空いてはいない。
@@ -118,7 +112,8 @@ impl DataPortionAllocator {
             debug_assert!(U24::from(size) <= free.len());
             self.delete_free_portion(free);
             let allocated = free.allocate(size);
-            if free.len() > 0 { // まだfree portionに空きがある場合は再利用する
+            if free.len() > 0 {
+                // まだfree portionに空きがある場合は再利用する
                 self.add_free_portion(free);
             }
             self.metrics.count_allocation(allocated.len);
@@ -166,7 +161,8 @@ impl DataPortionAllocator {
         // 従ってendが一致する場合に限りOrdering::Equalとなる。
         let key = FreePortion::new(portion.start(), 0);
         if let Some(prev) = self.end_to_free.get(&EndBasedFreePortion(key)).map(|p| p.0) {
-            if portion.checked_extend(prev.len()) { // trueの場合は副作用が発生するが、次で捨てる
+            if portion.checked_extend(prev.len()) {
+                // trueの場合は副作用が発生するが、次で捨てる
                 portion = FreePortion::new(prev.start(), portion.len());
                 self.delete_free_portion(prev); // prevの情報は不要なので削除
             }
@@ -192,7 +188,7 @@ impl DataPortionAllocator {
     }
 
     // EndBasedFreePortionを用いて、
-    // フリーリスト内のいずれとも領域が重なっていないかどうかを検査する。  
+    // フリーリスト内のいずれとも領域が重なっていないかどうかを検査する。
     // 領域が重なっていない場合 <=> 返り値がtrue に限り、割当済みの領域であると判断する。
     //
     // メモ: 現在の実装では `nth(0)` を用いているので、「いずれとも」領域が重なっていないかまでは判断できていない。
