@@ -109,14 +109,16 @@ impl DataPortionAllocator {
         let portion = SizeBasedFreePortion(FreePortion::new(Address::from(0), U24::from(size)));
         if let Some(mut free) = self
             .size_to_free
+            // `SizedBasedFreePortion`の全順序を用いて `size` を含むFreePortionを探す
             .range((Included(&portion), Unbounded))
+            // 従って、nth(0)では（存在すれば）size以上かつ最小のFreePortionを取得することになる
             .nth(0)
             .map(|p| p.0)
         {
             debug_assert!(U24::from(size) <= free.len());
             self.delete_free_portion(free);
             let allocated = free.allocate(size);
-            if free.len() > 0 {
+            if free.len() > 0 { // まだfree portionに空きがある場合は再利用する
                 self.add_free_portion(free);
             }
             self.metrics.count_allocation(allocated.len);
@@ -158,16 +160,20 @@ impl DataPortionAllocator {
 
     // `portion`と隣接する領域がフリーリスト内に存在する場合には、それらをまとめてしまう.
     fn merge_free_portions_if_possible(&mut self, mut portion: FreePortion) -> FreePortion {
-        // 「`portion`の始端」と「既存の空き領域の終端」が一致している
+        // 「`portion`の始端」に一致する終端を持つportion `prev`を探す。
+        // もし存在するなら、 prev portion の並びでmerge可能である。
+        // 注意: BTreeSetのgetでは、EqではなくOrd traitが用いられる。
+        // 従ってendが一致する場合に限りOrdering::Equalとなる。
         let key = FreePortion::new(portion.start(), 0);
         if let Some(prev) = self.end_to_free.get(&EndBasedFreePortion(key)).map(|p| p.0) {
-            if portion.checked_extend(prev.len()) {
+            if portion.checked_extend(prev.len()) { // trueの場合は副作用が発生するが、次で捨てる
                 portion = FreePortion::new(prev.start(), portion.len());
-                self.delete_free_portion(prev);
+                self.delete_free_portion(prev); // prevの情報は不要なので削除
             }
         }
 
-        // 「`portion`の終端」と「既存の空き領域の始端」が一致している
+        // 「`portion`の終端」に一致する終端を持つportion `next` を探す。
+        // もし存在するなら、 portion next の並びでmerge可能である。
         let key = FreePortion::new(portion.end(), 0);
         if let Some(next) = self
             .end_to_free
@@ -175,18 +181,26 @@ impl DataPortionAllocator {
             .nth(0)
             .map(|p| p.0)
         {
-            if next.start() == portion.end() && portion.checked_extend(next.len()) {
-                self.delete_free_portion(next);
+            if portion.checked_extend(next.len()) {
+                self.delete_free_portion(next); // nextの情報は不要なので削除
             }
         }
 
         portion
     }
 
+    // EndBasedFreePortionを用いて、
+    // フリーリスト内のいずれとも領域が重なっていないかどうかを検査する。  
+    // 領域が重なっていない場合 <=> 返り値がtrue に限り、割当済みの領域であると判断する。
+    //
+    // メモ: 現在の実装では `nth(0)` を用いているので、「いずれとも」領域が重なっていないかまでは判断できていない。
     fn is_allocated_portion(&self, portion: &DataPortion) -> bool {
-        // フリーリスト内のいずれとも領域が重なっていない場合には、割当済み領域だと判断する
         let key = EndBasedFreePortion(FreePortion::new(portion.start, 0));
         if let Some(next) = self.end_to_free.range((Excluded(&key), Unbounded)).nth(0) {
+            // 終端位置が `portion.start` を超えるfree portionのうち最小のもの `next` については
+            // - portion.end() <= next.0.start() すなわち overlapしていないか
+            // - portion.end() > next.0.start() すなわち overlapしているか
+            // を検査する
             portion.end() <= next.0.start()
         } else {
             true

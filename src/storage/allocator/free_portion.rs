@@ -85,6 +85,10 @@ impl From<DataPortion> for FreePortion {
 }
 
 /// 比較が"空き領域のサイズ順"で行われる`FreePortion`.
+///
+/// 導入される全順序は、次の二つの全順序をこの順番で入れた辞書式順序
+/// - 1. 空き領域のサイズ
+/// - 2. 開始位置
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SizeBasedFreePortion(pub FreePortion);
 impl PartialOrd for SizeBasedFreePortion {
