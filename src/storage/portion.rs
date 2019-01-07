@@ -1,17 +1,21 @@
+//! Data Portion, Journal Portion, and Portion
+
 use block::BlockSize;
 use storage::Address;
 
 /// データ領域内の部分領域を示すための構造体.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DataPortion {
-    /// 部分領域の開始位置.
+    /// 部分領域の開始位置（ブロック単位）
     pub start: Address,
 
-    /// 部分領域の長さ（ブロック単位）.
+    /// 部分領域の長さ（ブロック単位）
     pub len: u16,
 }
 impl DataPortion {
-    /// 部分領域の終端位置を返す.
+    /// 部分領域の終端位置を返す.  
+    /// **注意**: DataPortionは [start, end) の領域を用いるため、
+    /// end部には書き込みは行われていない。
     pub fn end(&self) -> Address {
         self.start + Address::from(u32::from(self.len))
     }
@@ -20,10 +24,10 @@ impl DataPortion {
 /// ジャーナル領域内の部分領域を示すための構造体.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct JournalPortion {
-    /// 部分領域の開始位置.
+    /// 部分領域の開始位置（バイト単位）
     pub start: Address,
 
-    /// 部分領域の長さ（バイト単位）.
+    /// 部分領域の長さ（バイト単位）
     pub len: u16,
 }
 
