@@ -32,13 +32,13 @@ use std::ops::Range;
 use Result;
 
 mod address;
-pub mod allocator;
+mod allocator;
 mod builder;
 mod data_region;
 mod header;
 mod index;
 mod journal;
-pub mod portion;
+mod portion;
 
 /// ストレージの先頭に書き込まれるマジックナンバー.
 ///
