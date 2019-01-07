@@ -1,4 +1,4 @@
-//! Free Portion
+//! Free Portion.
 
 use std::cmp;
 
@@ -25,17 +25,17 @@ impl FreePortion {
         FreePortion((u64::from(len) << 40) | offset.as_u64())
     }
 
-    /// このPortionの開始位置を表す
+    /// このPortionの開始位置を表す。
     pub fn start(self) -> Address {
         Address::from_u64(self.0 & Address::MAX).unwrap()
     }
 
-    /// このPortionの終了位置を表す
+    /// このPortionの終了位置を表す。
     pub fn end(self) -> Address {
         self.start() + Address::from(self.len())
     }
 
-    /// このPortionの長さを表す
+    /// このPortionの長さを表す。
     pub fn len(self) -> U24 {
         (self.0 >> 40) as U24
     }
@@ -60,8 +60,8 @@ impl FreePortion {
     /// `size`が`self.len()`を超えている場合には、現在のスレッドがパニックする.
     pub fn allocate(&mut self, size: u16) -> DataPortion {
         assert!(U24::from(size) <= self.len());
-        // 自分自身を先頭からsizeでsplitする
-        // 前半をallocatedとし、後者により自分自身を更新する
+        // 自分自身を先頭からsizeでsplitする。
+        // 前半をallocatedとし、後者により自分自身を更新する。
         let allocated = DataPortion {
             start: self.start(),
             len: size,

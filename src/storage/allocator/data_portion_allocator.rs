@@ -1,4 +1,4 @@
-//! Data Portion
+//! Data Portion Allocator.
 
 use std::cmp;
 use std::collections::BTreeSet;
@@ -191,7 +191,10 @@ impl DataPortionAllocator {
     // フリーリスト内のいずれとも領域が重なっていないかどうかを検査する。
     // 領域が重なっていない場合 <=> 返り値がtrue に限り、割当済みの領域であると判断する。
     //
-    // メモ: 現在の実装では `nth(0)` を用いているので、「いずれとも」領域が重なっていないかまでは判断できていない。
+    // メモ:
+    //    現在の実装では `nth(0)` を用いているため、
+    //    フリーリスト内の相異なる部分領域が互いに素であるという前提が必要である。
+    //    ただしこの前提は通常のCannyLSの使用であれば成立する。
     fn is_allocated_portion(&self, portion: &DataPortion) -> bool {
         let key = EndBasedFreePortion(FreePortion::new(portion.start, 0));
         if let Some(next) = self.end_to_free.range((Excluded(&key), Unbounded)).nth(0) {

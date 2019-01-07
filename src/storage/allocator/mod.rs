@@ -6,8 +6,8 @@
 //! アロケータが担当するのは、領域の計算処理のみで、実際のデータの読み書き等を、この中で行うことは無い.
 pub use self::data_portion_allocator::DataPortionAllocator;
 
-pub mod data_portion_allocator;
-pub mod free_portion;
+mod data_portion_allocator;
+mod free_portion;
 
 /// 24bit幅の整数.
 type U24 = u32;
