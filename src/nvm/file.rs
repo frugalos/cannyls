@@ -127,6 +127,7 @@ impl FileNvmBuilder {
         filepath: P,
         capacity: u64,
     ) -> Result<(FileNvm, bool)> {
+        create_parent_directories(&filepath)?;
         let mut options = self.open_options();
         // OpenOptions::createはファイルが既に存在する場合はそれを開き
         // 存在しない場合は作成する
@@ -153,9 +154,7 @@ impl FileNvmBuilder {
     /// `filepath`に（非零バイト）ファイルが存在する場合にそれを開きたいならば、
     /// このメソッドの代わりに`create_if_absent`を用いる。
     pub fn create<P: AsRef<Path>>(&mut self, filepath: P, capacity: u64) -> Result<FileNvm> {
-        if let Some(dir) = filepath.as_ref().parent() {
-            track_io!(fs::create_dir_all(dir))?;
-        }
+        create_parent_directories(&filepath)?;
         let mut options = self.open_options();
         // OpenOptions::create_newはファイルが存在しない場合だけ作成し
         // 存在しない場合はエラーとなる。
@@ -353,6 +352,14 @@ impl Write for FileNvm {
     }
 }
 
+/// 親ディレクトリの作成が必要な場合は作成する。
+fn create_parent_directories<P: AsRef<Path>>(filepath: P) -> Result<()> {
+    if let Some(dir) = filepath.as_ref().parent() {
+        track_io!(fs::create_dir_all(dir))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -424,6 +431,23 @@ mod tests {
         let mut buf = vec![0; 512];
         track_io!(file.read_exact(&mut buf[..]))?;
         assert_eq!(buf, data);
+        Ok(())
+    }
+
+    #[test]
+    fn create_if_absent_must_create_parent_directories() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+        let capacity = 10 * 1024;
+        let filepath = dir.path().join("foo").join("bar").join("buzz");
+        let parent = track_io!(filepath.parent().ok_or(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Parent directory must be present"
+        )))?;
+        assert!(!parent.exists());
+        assert!(!filepath.exists());
+        let (_, created) = track!(FileNvm::create_if_absent(&filepath, capacity))?;
+        assert!(created);
+        assert!(parent.exists());
         Ok(())
     }
 
