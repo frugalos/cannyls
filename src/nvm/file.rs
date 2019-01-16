@@ -200,6 +200,7 @@ impl FileNvmBuilder {
         filepath: P,
         capacity: u64,
     ) -> Result<(FileNvm, bool)> {
+        create_parent_directories(&filepath)?;
         let mut options = self.open_options();
         // OpenOptions::createはファイルが既に存在する場合はそれを開き
         // 存在しない場合は作成する
@@ -226,9 +227,7 @@ impl FileNvmBuilder {
     /// `filepath`に（非零バイト）ファイルが存在する場合にそれを開きたいならば、
     /// このメソッドの代わりに`create_if_absent`を用いる。
     pub fn create<P: AsRef<Path>>(&mut self, filepath: P, capacity: u64) -> Result<FileNvm> {
-        if let Some(dir) = filepath.as_ref().parent() {
-            track_io!(fs::create_dir_all(dir))?;
-        }
+        create_parent_directories(&filepath)?;
         let mut options = self.open_options();
         // OpenOptions::create_newはファイルが存在しない場合だけ作成し
         // 存在しない場合はエラーとなる。
@@ -426,6 +425,14 @@ impl Write for FileNvm {
     }
 }
 
+/// 親ディレクトリの作成が必要な場合は作成する。
+fn create_parent_directories<P: AsRef<Path>>(filepath: P) -> Result<()> {
+    if let Some(dir) = filepath.as_ref().parent() {
+        track_io!(fs::create_dir_all(dir))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -437,6 +444,53 @@ mod tests {
     use super::*;
     use block::{AlignedBytes, BlockSize};
     use storage::{StorageHeader, MAJOR_VERSION, MINOR_VERSION};
+
+    #[test]
+    fn create_parent_directories_is_idempotent() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+        let filepath = dir.path().join("dir1").join("file1");
+
+        assert!(create_parent_directories(&filepath).is_ok());
+        assert!(create_parent_directories(&filepath).is_ok());
+
+        Ok(())
+    }
+
+    #[test]
+    fn create_parent_directories_creates_parent_directories() -> TestResult {
+        let root = track_io!(TempDir::new("cannyls_test1"))?.into_path();
+        let sub_dirs = vec!["dir1", "dir2", "dir3"];
+        let filepath = root.join("dir1").join("dir2").join("dir3").join("1.lusf");
+
+        // 作成前は存在しない
+        let mut dir = root.clone();
+        for sub_dir in &sub_dirs {
+            dir = dir.join(sub_dir);
+            assert!(!dir.exists());
+        }
+
+        create_parent_directories(filepath)?;
+
+        // 作成後は存在する
+        let mut dir = root;
+        for sub_dir in &sub_dirs {
+            dir = dir.join(sub_dir);
+            assert!(dir.exists());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn create_parent_directories_does_nothing_if_there_is_no_parent() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test1"))?;
+        let mut parent = dir.as_ref();
+        while let Some(p) = parent.parent() {
+            parent = p;
+        };
+        assert!(create_parent_directories(parent).is_ok());
+        Ok(())
+    }
 
     #[test]
     fn open_and_create_works() -> TestResult {
@@ -497,6 +551,23 @@ mod tests {
         let mut buf = vec![0; 512];
         track_io!(file.read_exact(&mut buf[..]))?;
         assert_eq!(buf, data);
+        Ok(())
+    }
+
+    #[test]
+    fn create_if_absent_must_create_parent_directories() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+        let capacity = 10 * 1024;
+        let filepath = dir.path().join("foo").join("bar").join("buzz");
+        let parent = track_io!(filepath.parent().ok_or(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Parent directory must be present"
+        )))?;
+        assert!(!parent.exists());
+        assert!(!filepath.exists());
+        let (_, created) = track!(FileNvm::create_if_absent(&filepath, capacity))?;
+        assert!(created);
+        assert!(parent.exists());
         Ok(())
     }
 
