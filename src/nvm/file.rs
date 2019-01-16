@@ -373,6 +373,30 @@ mod tests {
     use storage::{StorageHeader, MAJOR_VERSION, MINOR_VERSION};
 
     #[test]
+    fn create_parent_directories_creates_parent_directories() -> TestResult {
+        let root = track_io!(TempDir::new("cannyls_test1"))?;
+        let filepath = root.path().join("dir1").join("dir2").join("dir3").join("1.lusf");
+        create_parent_directories(filepath)?;
+        let mut dir = root.into_path();
+        for sub_dir in vec!["dir1", "dir2", "dir3"] {
+            dir = dir.join(sub_dir);
+            assert!(dir.exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn create_parent_directories_does_nothing_if_there_is_no_parent() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test1"))?;
+        let mut parent = dir.as_ref();
+        while let Some(p) = parent.parent() {
+            parent = p;
+        };
+        assert!(create_parent_directories(parent).is_ok());
+        Ok(())
+    }
+
+    #[test]
     fn open_and_create_works() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
         let capacity = 10 * 1024;
