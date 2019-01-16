@@ -374,14 +374,26 @@ mod tests {
 
     #[test]
     fn create_parent_directories_creates_parent_directories() -> TestResult {
-        let root = track_io!(TempDir::new("cannyls_test1"))?;
-        let filepath = root.path().join("dir1").join("dir2").join("dir3").join("1.lusf");
+        let root = track_io!(TempDir::new("cannyls_test1"))?.into_path();
+        let sub_dirs = vec!["dir1", "dir2", "dir3"];
+        let filepath = root.join("dir1").join("dir2").join("dir3").join("1.lusf");
+
+        // 作成前は存在しない
+        let mut dir = root.clone();
+        for sub_dir in &sub_dirs {
+            dir = dir.join(sub_dir);
+            assert!(!dir.exists());
+        }
+
         create_parent_directories(filepath)?;
-        let mut dir = root.into_path();
-        for sub_dir in vec!["dir1", "dir2", "dir3"] {
+
+        // 作成後は存在する
+        let mut dir = root;
+        for sub_dir in &sub_dirs {
             dir = dir.join(sub_dir);
             assert!(dir.exists());
         }
+
         Ok(())
     }
 
