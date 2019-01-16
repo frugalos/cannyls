@@ -373,6 +373,17 @@ mod tests {
     use storage::{StorageHeader, MAJOR_VERSION, MINOR_VERSION};
 
     #[test]
+    fn create_parent_directories_is_idempotent() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+        let filepath = dir.path().join("dir1").join("file1");
+
+        assert!(create_parent_directories(&filepath).is_ok());
+        assert!(create_parent_directories(&filepath).is_ok());
+
+        Ok(())
+    }
+
+    #[test]
     fn create_parent_directories_creates_parent_directories() -> TestResult {
         let root = track_io!(TempDir::new("cannyls_test1"))?.into_path();
         let sub_dirs = vec!["dir1", "dir2", "dir3"];
