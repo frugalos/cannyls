@@ -17,6 +17,10 @@ pub struct LumpIndex {
     map: BTreeMap<LumpId, PortionU64>,
 }
 impl LumpIndex {
+    pub fn entries(&self) -> Entries {
+        Entries(self.map.iter())
+    }
+
     /// 新しい`LumpIndex`インスタンスを生成する.
     pub fn new() -> Self {
         LumpIndex {
@@ -72,6 +76,20 @@ impl<'a> Iterator for DataPortions<'a> {
         while let Some(portion) = self.0.next() {
             if let Portion::Data(portion) = portion.clone().into() {
                 return Some(portion);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Debug)]
+pub struct Entries<'a>(btree_map::Iter<'a, LumpId, PortionU64>);
+impl<'a> Iterator for Entries<'a> {
+    type Item = (LumpId, DataPortion);
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((lumpid, portion)) = self.0.next() {
+            if let Portion::Data(portion) = portion.clone().into() {
+                return Some((lumpid.clone(), portion));
             }
         }
         None

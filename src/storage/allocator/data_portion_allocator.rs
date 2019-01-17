@@ -1,12 +1,13 @@
 //! Data Portion Allocator.
 
 use std::cmp;
-use std::collections::BTreeSet;
 use std::collections::Bound::{Excluded, Included, Unbounded};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::free_portion::{EndBasedFreePortion, FreePortion, SizeBasedFreePortion};
+use super::free_portion::{FreePortion, StartBasedFreePortion};
 use super::U24;
 use metrics::DataAllocatorMetrics;
+use storage::index::LumpIndex;
 use storage::portion::DataPortion;
 use storage::Address;
 use {ErrorKind, Result};
@@ -36,11 +37,218 @@ use {ErrorKind, Result};
 /// もしまだ余剰分がある場合には、再び空き領域リストに戻される.
 #[derive(Debug)]
 pub struct DataPortionAllocator {
-    size_to_free: BTreeSet<SizeBasedFreePortion>,
-    end_to_free: BTreeSet<EndBasedFreePortion>,
     metrics: DataAllocatorMetrics,
+    free_portions: BTreeSet<StartBasedFreePortion>, // portionの全体を管理
+    next_pos: u64,                                  // 次に書き込むべき位置
 }
 impl DataPortionAllocator {
+    /// `size`分の部分領域の割当を行う.
+    ///
+    /// 十分な領域が存在しない場合には`None`が返される.
+    pub fn allocate(&mut self, size: u16) -> Option<DataPortion> {
+        /*
+        現在の居場所から右方向に探索を行いヒットしたportionからデータを取る。
+
+        1. next_posから右方向に検索し、sizeだけのデータを含むPortionがある場合
+        2. ないので、先頭に戻ってきてしまう場合
+         */
+
+        let border = self.next_pos;
+        // search_next(next_pos, size, capacity, free_portions)
+        // まず現在位置より右側を探す
+        // iterはascending orderなイテレータを作ることが保証されていることを利用する。
+        // 参考: https://doc.rust-lang.org/std/collections/struct.BTreeSet.html#method.iter
+        for portion in self
+            .free_portions
+            .iter()
+            // filterはiterの並びを変えないという仮定をおいているが、定かではない
+            .filter(|portion| portion.0.start().as_u64() >= border)
+        {
+            let mut portion = portion.0;
+            if (size as u32) < portion.len() {
+                let new_data_portion = portion.allocate(size);
+                self.next_pos = new_data_portion.start.as_u64();
+                self.metrics.count_allocation(new_data_portion.len);
+                return Some(new_data_portion);
+            }
+        }
+
+        // 現在位置より右側に size を超える容量を持つPortionがなかったため
+        // 今度は先頭からnext_pos未満を調べる
+        for portion in self
+            .free_portions
+            .iter()
+            .filter(|portion| portion.0.start().as_u64() < border)
+        {
+            let mut portion = portion.0;
+            if (size as u32) < portion.len() {
+                let new_data_portion = portion.allocate(size);
+                self.next_pos = new_data_portion.start.as_u64();
+                self.metrics.count_allocation(new_data_portion.len);
+                return Some(new_data_portion);
+            }
+        }
+
+        // どちらでもPortionを見つけられなかった場合は、allocate失敗とする
+        self.metrics.nospace_failures.increment();
+        None
+    }
+
+    fn merge_free_portions_if_possible(&mut self, mut portion: FreePortion) -> FreePortion {
+        // 「`portion`の始端」に一致する終端を持つportion `prev`を探す。
+        // もし存在するなら、 prev portion の並びでmerge可能である。
+        // 注意: BTreeSetのgetでは、EqではなくOrd traitが用いられる。
+        // 従ってendが一致する場合に限りOrdering::Equalとなる。
+        let key = FreePortion::new(portion.start(), 0);
+        if let Some(prev) = self
+            .free_portions
+            // free_portionsから、開始位置がportion.start未満のものを探し
+            .range((Unbounded, Excluded(&StartBasedFreePortion(key))))
+            // そのうちで最後の要素を取り出す
+            .next_back()
+            .map(|p| p.0)
+        {
+            // 最後の要素を取り出しただけでは、それが隣接しているかどうか分からないため検査する
+            if prev.end() == portion.start() && portion.checked_extend(prev.len()) {
+                portion = FreePortion::new(prev.start(), portion.len());
+                self.free_portions.remove(&StartBasedFreePortion(prev));
+            }
+        }
+
+        // 「`portion`の終端」に一致する始端を持つportion `next` を探す。
+        // もし存在するなら、 portion next の並びでmerge可能である。
+        let key = FreePortion::new(portion.end(), 0);
+        if let Some(next) = self
+            .free_portions
+            .get(&StartBasedFreePortion(key))
+            .map(|n| n.0)
+        {
+            if portion.checked_extend(next.len()) {
+                self.free_portions.remove(&StartBasedFreePortion(next));
+            }
+        }
+
+        portion
+    }
+
+    /// 割当済みの部分領域の解放を行う.
+    ///
+    /// # 事前条件
+    ///
+    /// - `portion`は「以前に割当済み」かつ「未解放」の部分領域である
+    pub fn release(&mut self, portion: DataPortion) {
+        self.metrics.count_releasion(portion.len);
+        let portion = self.merge_free_portions_if_possible(FreePortion::from(portion));
+        self.free_portions.insert(StartBasedFreePortion(portion));
+    }
+
+    fn to_node_and_version(lumpid: &u128) -> Option<(u64, u64)> {
+        // frugalosによって挿入されたlumpidの構成は次のようになっているはず
+        // データ:      lumpid[0] = 1, lumpid[1..6] = node id, lumpid[8..15] = version
+        // Raftデータ:  lumpid[0] = 0, lumpid[1..6] = node id, lumpid[7] = type, lumpid[8..15] = lumpid
+
+        if (lumpid >> 120) == 1u128 {
+            let node_id = (lumpid >> 64u128) & 0x0000ffff_ffffffff;
+            let version = lumpid & 0xffffffff_ffffffff;
+            Some((node_id as u64, version as u64))
+        } else {
+            None
+        }
+    }
+
+    /*
+    現在の実装は　[ [] ] のようにすっぽり収まっている場合を考えられていない。
+     */
+    fn guess_who_is_the_latest(
+        summary: &HashMap<u64, ((u64, u64), (u64, u64))>,
+    ) -> Vec<((u64, u64), (u64, u64))> {
+        fn is_cycle(x: u64, y: u64, z: u64) -> bool {
+            (x < y && y < z) || (z < x && x < y) || (y < z && z < x)
+        }
+
+        fn is_dominated(left: (u64, u64), right: (u64, u64)) -> bool {
+            is_cycle(right.0, left.1, right.1)
+        }
+
+        /*
+        各nodeに次の関係 <: を入れる
+        (A=Version, B=Version) <: (C=Version, D=Version) <->
+        何れかが成立する:
+        1. C.pos < B.pos < D.pos
+        2. D.pos < C.pos < B.pos
+        3. B.pos < D.pos < C.pos
+
+        この関係 <: の左側を、右側によって支配されていると呼ぶ。
+        誰にも支配されていない元を求める。
+         */
+
+        let mut full: BTreeSet<u64> = BTreeSet::new();
+        for key in summary.keys() {
+            full.insert(*key);
+        }
+
+        for (key1, value1) in summary.iter() {
+            let left_pos1 = (value1.0).1;
+            let left_pos2 = (value1.1).1;
+            for (key2, value2) in summary.iter() {
+                let right_pos1 = (value2.0).1;
+                let right_pos2 = (value2.1).1;
+                if key1 != key2 && is_dominated((left_pos1, left_pos2), (right_pos1, right_pos2)) {
+                    full.remove(key1);
+                }
+            }
+        }
+
+        let mut result: Vec<((u64, u64), (u64, u64))> = Vec::new();
+        for item in full.iter() {
+            result.push(*summary.get(item).unwrap());
+        }
+        result
+    }
+
+    pub fn build2(metrics: DataAllocatorMetrics, lump_index: &LumpIndex) -> Result<Self> {
+        type Node = u64;
+        type Version = u64;
+        type Index = u64;
+        let mut summary: HashMap<Node, ((Version, Index), (Version, Index))> = HashMap::new();
+
+        for (lumpid, portion) in lump_index.entries() {
+            let index = portion.start.as_u64();
+            if let Some((node, version)) = Self::to_node_and_version(&lumpid.as_u128()) {
+                if summary.contains_key(&node) {
+                    let (vp1, vp2) = summary.get_mut(&node).unwrap();
+                    if version > vp2.0 {
+                        *vp2 = (version, index);
+                    }
+                } else {
+                    summary.insert(node, ((version, index), (version, index)));
+                }
+            }
+        }
+
+        let candidates = Self::guess_who_is_the_latest(&summary);
+
+        match candidates.len() {
+            0 => {
+                // lump_indexのサイズがそもそも0だった
+            }
+            1 => {
+                // 次に書き込むべき場所が決まった
+            }
+            _ => {
+                // 次に書き込むべき場所が決まっていない
+                // このときって、candidatesの結果は有用なのか？
+            }
+        }
+
+        let allocator = DataPortionAllocator {
+            free_portions: BTreeSet::new(),
+            next_pos: 0,
+            metrics,
+        };
+        Ok(allocator)
+    }
+
     /// アロケータを構築する.
     ///
     /// `portions`には、既に割当済みの部分領域群が列挙されている.
@@ -50,162 +258,17 @@ impl DataPortionAllocator {
     where
         I: Iterator<Item = DataPortion>,
     {
-        let block_size = u64::from(metrics.block_size.as_u16());
-        let mut portions = portions.collect::<Vec<_>>();
-        metrics
-            .allocated_portions_at_starting
-            .add_u64(portions.len() as u64);
-        metrics
-            .allocated_bytes_at_starting
-            .add_u64(portions.iter().map(|p| u64::from(p.len) * block_size).sum());
-
-        let sentinel = DataPortion {
-            start: Address::from(0),
-            len: 0,
-        };
-        portions.push(sentinel);
-        // DataPortionの終端を用いて降順ソートを行う。
-        // すなわち、ソート後は、先頭であればあるほどend()の値は大きい。
-        portions.sort_by(|a: &DataPortion, b: &DataPortion| b.end().cmp(&a.end()));
-
-        // 変数tailの意味は次の通り:
-        // tail位置には値が書き込めない・書き込まれている、すなわち空いてはいない。
-        let mut tail = metrics.capacity_bytes / block_size;
-        let mut allocator = DataPortionAllocator {
-            size_to_free: BTreeSet::new(),
-            end_to_free: BTreeSet::new(),
+        let allocator = DataPortionAllocator {
+            free_portions: BTreeSet::new(),
+            next_pos: 0,
             metrics,
         };
-        for portion in portions {
-            track_assert!(portion.end().as_u64() <= tail, ErrorKind::InvalidInput);
-
-            // endはexclusiveであることに注意する。
-            // すなわち、endの手前まではデータが詰まっているが、endにはデータがない
-            while portion.end().as_u64() < tail {
-                let delta = tail - portion.end().as_u64(); // いま着目しているportionの後ろ側にある空きブロック数
-                let size = cmp::min(0xFF_FFFF, delta) as U24; // 最大でも24バイト表現なので切り詰めを行う
-
-                // tail-size位置 から size分 の空き容量があることが分かっているので
-                // これを追加する
-                tail -= u64::from(size);
-                let free = FreePortion::new(Address::from_u64(tail).unwrap(), size);
-                allocator.add_free_portion(free);
-            }
-            tail = portion.start.as_u64();
-        }
         Ok(allocator)
-    }
-
-    /// `size`分の部分領域の割当を行う.
-    ///
-    /// 十分な領域が存在しない場合には`None`が返される.
-    pub fn allocate(&mut self, size: u16) -> Option<DataPortion> {
-        let portion = SizeBasedFreePortion(FreePortion::new(Address::from(0), U24::from(size)));
-        if let Some(mut free) = self
-            .size_to_free
-            // `SizedBasedFreePortion`の全順序を用いて `size` を含むFreePortionを探す
-            .range((Included(&portion), Unbounded))
-            // 従って、nth(0)では（存在すれば）size以上かつ最小のFreePortionを取得することになる
-            .nth(0)
-            .map(|p| p.0)
-        {
-            debug_assert!(U24::from(size) <= free.len());
-            self.delete_free_portion(free);
-            let allocated = free.allocate(size);
-            if free.len() > 0 {
-                // まだfree portionに空きがある場合は再利用する
-                self.add_free_portion(free);
-            }
-            self.metrics.count_allocation(allocated.len);
-            Some(allocated)
-        } else {
-            self.metrics.nospace_failures.increment();
-            None
-        }
-    }
-
-    /// 割当済みの部分領域の解放を行う.
-    ///
-    /// # 事前条件
-    ///
-    /// - `portion`は「以前に割当済み」かつ「未解放」の部分領域である
-    pub fn release(&mut self, portion: DataPortion) {
-        assert!(self.is_allocated_portion(&portion), "{:?}", portion);
-        self.metrics.count_releasion(portion.len);
-        let portion = self.merge_free_portions_if_possible(FreePortion::from(portion));
-        self.add_free_portion(portion);
     }
 
     /// アロケータ用のメトリクスを返す.
     pub fn metrics(&self) -> &DataAllocatorMetrics {
         &self.metrics
-    }
-
-    fn add_free_portion(&mut self, portion: FreePortion) {
-        assert!(self.size_to_free.insert(SizeBasedFreePortion(portion)));
-        assert!(self.end_to_free.insert(EndBasedFreePortion(portion)));
-        self.metrics.inserted_free_portions.increment();
-    }
-
-    fn delete_free_portion(&mut self, portion: FreePortion) {
-        assert!(self.size_to_free.remove(&SizeBasedFreePortion(portion)));
-        assert!(self.end_to_free.remove(&EndBasedFreePortion(portion)));
-        self.metrics.removed_free_portions.increment();
-    }
-
-    // `portion`と隣接する領域がフリーリスト内に存在する場合には、それらをまとめてしまう.
-    fn merge_free_portions_if_possible(&mut self, mut portion: FreePortion) -> FreePortion {
-        // 「`portion`の始端」に一致する終端を持つportion `prev`を探す。
-        // もし存在するなら、 prev portion の並びでmerge可能である。
-        // 注意: BTreeSetのgetでは、EqではなくOrd traitが用いられる。
-        // 従ってendが一致する場合に限りOrdering::Equalとなる。
-        let key = FreePortion::new(portion.start(), 0);
-        if let Some(prev) = self.end_to_free.get(&EndBasedFreePortion(key)).map(|p| p.0) {
-            if portion.checked_extend(prev.len()) {
-                // trueの場合は副作用が発生するが、次で捨てる
-                portion = FreePortion::new(prev.start(), portion.len());
-                self.delete_free_portion(prev); // prevの情報は不要なので削除
-            }
-        }
-
-        // 「`portion`の終端」に一致する始端を持つportion `next` を探す。
-        // もし存在するなら、 portion next の並びでmerge可能である。
-        let key = FreePortion::new(portion.end(), 0);
-        if let Some(next) = self
-            .end_to_free
-            .range((Excluded(&EndBasedFreePortion(key)), Unbounded))
-            .nth(0)
-            .map(|p| p.0)
-        {
-            // `next`については`portion.end < next.end`を満たす最小のポーションということしか分かっていない。
-            // portion.end == next.start かどうかを確認する必要がある。
-            if next.start() == portion.end() && portion.checked_extend(next.len()) {
-                self.delete_free_portion(next); // nextの情報は不要なので削除
-            }
-        }
-
-        portion
-    }
-
-    // EndBasedFreePortionを用いて、
-    // フリーリスト内のいずれとも領域が重なっていないかどうかを検査する。
-    // 領域が重なっていない場合 <=> 返り値がtrue に限り、割当済みの領域であると判断する。
-    //
-    // メモ:
-    //    現在の実装では `nth(0)` を用いているため、
-    //    フリーリスト内の相異なる部分領域が互いに素であるという前提が必要である。
-    //    ただしこの前提は通常のCannyLSの使用であれば成立する。
-    fn is_allocated_portion(&self, portion: &DataPortion) -> bool {
-        let key = EndBasedFreePortion(FreePortion::new(portion.start, 0));
-        if let Some(next) = self.end_to_free.range((Excluded(&key), Unbounded)).nth(0) {
-            // 終端位置が `portion.start` を超えるfree portionのうち最小のもの `next` については
-            // - portion.end() <= next.0.start() すなわち overlapしていないか
-            // - portion.end() > next.0.start() すなわち overlapしているか
-            // を検査する
-            portion.end() <= next.0.start()
-        } else {
-            true
-        }
     }
 }
 

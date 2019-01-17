@@ -119,6 +119,20 @@ impl Ord for EndBasedFreePortion {
     }
 }
 
+// 比較が"開始位置が小さい順"で行われる`FreePortion`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartBasedFreePortion(pub FreePortion);
+impl PartialOrd for StartBasedFreePortion {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for StartBasedFreePortion {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.0.start().cmp(&other.0.start())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
