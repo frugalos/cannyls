@@ -240,11 +240,13 @@ where
     ///
     /// # 注意
     ///
-    /// `range`に含まれる全てのLumpを削除しようとするため、
-    /// `range`が巨大な場合にはこのメソッドは長時間スレッドをブロックしてしまう。
+    /// `range`が大量の要素を含む場合には、
+    /// このメソッドの返り値は巨大なLumpIdの配列を返しうることに注意されたい。
     pub fn delete_range(&mut self, range: Range<LumpId>) -> Result<Vec<LumpId>> {
         let targets = self.lump_index.list_range(range.clone());
 
+        // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
+        // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
         track!(self
                .journal_region
                .records_delete_range(&mut self.lump_index, range))?;
@@ -254,6 +256,9 @@ where
                 self.metrics.delete_lumps.increment();
 
                 if let Portion::Data(portion) = portion {
+                    // DataRegion::deleteはメモリアロケータに対する解放要求をするのみで
+                    // ディスクにアクセスすることはない。
+                    // （管理領域から外すだけで、例えばディスク上の値を0クリアするようなことはない）
                     self.data_region.delete(portion);
                 }
             }
