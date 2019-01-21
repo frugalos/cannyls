@@ -237,22 +237,32 @@ where
     /// このメソッドがエラーを返した場合には、
     /// 不整合ないしI/O周りで致命的な問題が発生している可能性があるので、
     /// 以後はこのインスタンスの使用を中止するのが望ましい.
+    ///
+    /// # 注意
+    ///
+    /// `range`が大量の要素を含む場合には、
+    /// このメソッドは巨大なLumpIdの配列を返しうることに注意されたい。
     pub fn delete_range(&mut self, range: Range<LumpId>) -> Result<Vec<LumpId>> {
         let targets = self.lump_index.list_range(range.clone());
 
+        // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
+        // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
+        track!(self
+               .journal_region
+               .records_delete_range(&mut self.lump_index, range))?;
+        
         for lump_id in &targets {
             if let Some(portion) = self.lump_index.remove(lump_id) {
                 self.metrics.delete_lumps.increment();
 
                 if let Portion::Data(portion) = portion {
+                    // DataRegion::deleteはメモリアロケータに対する解放要求をするのみで
+                    // ディスクにアクセスすることはない。
+                    // （管理領域から外すだけで、例えばディスク上の値を0クリアするようなことはない）
                     self.data_region.delete(portion);
                 }
             }
-        }
-
-        track!(self
-            .journal_region
-            .records_delete_range(&mut self.lump_index, range))?;
+        }        
 
         Ok(targets)
     }
