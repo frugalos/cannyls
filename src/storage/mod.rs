@@ -241,7 +241,7 @@ where
     /// # 注意
     ///
     /// `range`が大量の要素を含む場合には、
-    /// このメソッドの返り値は巨大なLumpIdの配列を返しうることに注意されたい。
+    /// このメソッドは巨大なLumpIdの配列を返しうることに注意されたい。
     pub fn delete_range(&mut self, range: Range<LumpId>) -> Result<Vec<LumpId>> {
         let targets = self.lump_index.list_range(range.clone());
 
