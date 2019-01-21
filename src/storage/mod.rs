@@ -237,9 +237,18 @@ where
     /// このメソッドがエラーを返した場合には、
     /// 不整合ないしI/O周りで致命的な問題が発生している可能性があるので、
     /// 以後はこのインスタンスの使用を中止するのが望ましい.
+    ///
+    /// # 注意
+    ///
+    /// `range`に含まれる全てのLumpを削除しようとするため、
+    /// `range`が巨大な場合にはこのメソッドは長時間スレッドをブロックしてしまう。
     pub fn delete_range(&mut self, range: Range<LumpId>) -> Result<Vec<LumpId>> {
         let targets = self.lump_index.list_range(range.clone());
 
+        track!(self
+               .journal_region
+               .records_delete_range(&mut self.lump_index, range))?;
+        
         for lump_id in &targets {
             if let Some(portion) = self.lump_index.remove(lump_id) {
                 self.metrics.delete_lumps.increment();
@@ -248,11 +257,7 @@ where
                     self.data_region.delete(portion);
                 }
             }
-        }
-
-        track!(self
-            .journal_region
-            .records_delete_range(&mut self.lump_index, range))?;
+        }        
 
         Ok(targets)
     }
