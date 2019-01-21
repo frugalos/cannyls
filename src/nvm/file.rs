@@ -538,9 +538,11 @@ mod tests {
         // `FileNvm`はオープン時にlusfのヘッダがあることを想定しているので先頭に適当なヘッダを書き込む
         let mut data = Vec::new();
         track!(storage_header().write_to(&mut data))?;
-        data.resize(512, 7);
+        // 最小ブロックサイズに切り上げる。
+        // 切り上げるために定数7をpaddingする。
+        data.resize(BlockSize::MIN as usize, 7);
 
-        track_io!(file.write_all(&data))?;
+        track_io!(file.write_all(&aligned_bytes(&data[..])))?;
         mem::drop(file);
 
         // オープン
@@ -548,9 +550,9 @@ mod tests {
         let (mut file, created) =
             track!(FileNvm::create_if_absent(dir.path().join("foo"), capacity))?;
         assert!(!created);
-        let mut buf = vec![0; 512];
+        let mut buf = aligned_bytes_with_size(data.len());
         track_io!(file.read_exact(&mut buf[..]))?;
-        assert_eq!(buf, data);
+        assert_eq!(buf.as_ref(), &data[..]);
         Ok(())
     }
 
