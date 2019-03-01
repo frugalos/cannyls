@@ -7,6 +7,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 pub use self::file::{FileNvm, FileNvmBuilder};
 pub use self::memory::MemoryNvm;
 pub use self::shared_memory::SharedMemoryNvm;
+pub use self::dax::MemoryNvm as DAXNvm;
 
 use block::{AlignedBytes, BlockSize};
 use {ErrorKind, Result};
@@ -14,6 +15,7 @@ use {ErrorKind, Result};
 mod file;
 mod memory;
 mod shared_memory;
+mod dax;
 
 /// 不揮発性メモリを表すトレイト.
 ///
