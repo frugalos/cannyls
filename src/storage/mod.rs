@@ -248,9 +248,9 @@ where
         // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
         // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
         track!(self
-               .journal_region
-               .records_delete_range(&mut self.lump_index, range))?;
-        
+            .journal_region
+            .records_delete_range(&mut self.lump_index, range))?;
+
         for lump_id in &targets {
             if let Some(portion) = self.lump_index.remove(lump_id) {
                 self.metrics.delete_lumps.increment();
@@ -262,7 +262,7 @@ where
                     self.data_region.delete(portion);
                 }
             }
-        }        
+        }
 
         Ok(targets)
     }
@@ -739,5 +739,56 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn cannyls_panic() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+
+        let nvm = track!(FileNvm::create(
+            dir.path().join("test.lusf"),
+            BlockSize::min().ceil_align(1024 * 400 * 6)
+        ))?;
+        let mut storage = track!(StorageBuilder::new().journal_region_ratio(0.01).create(nvm))?;
+        storage.set_automatic_gc_mode(false);
+
+        {
+            let i = 10000;
+            let vec: Vec<u8> = vec![42; 10];
+            let lump_data = track!(LumpData::new_embedded(vec))?;
+            assert!(storage.put(&id(&i.to_string()), &lump_data)?);
+        }
+
+        track!(storage.run_side_job_once())?;
+
+        {
+            let i = 10000;
+            assert!(storage.delete(&id(&i.to_string()))?);
+        }
+
+        track!(storage.run_side_job_once())?;
+        track!(storage.run_side_job_once())?;
+
+        track!(storage.run_side_job_once())?;
+        track!(storage.run_side_job_once())?;
+
+        std::mem::drop(storage);
+
+        let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
+        let mut storage = track!(Storage::open(nvm))?;
+
+        for i in 0..120 {
+            let vec: Vec<u8> = vec![42; 150];
+            let lump_data = track!(LumpData::new_embedded(vec))?;
+            assert!(storage.put(&id(&i.to_string()), &lump_data)?);
+        }
+
+        track!(storage.run_side_job_once())?;
+
+        std::mem::drop(storage);
+
+        let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
+        let _ = track!(Storage::open(nvm))?;
+        unreachable!();
     }
 }
