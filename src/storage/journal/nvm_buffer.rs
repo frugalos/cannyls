@@ -391,7 +391,7 @@ mod tests {
 
         let mut read1 = vec![0; 3];
         track_io!(buffer.seek(SeekFrom::Start(0)))?;
-        let len = track_io!(buffer.read(&mut read))?;
+        let len = track_io!(buffer.read(&mut read1))?;
         assert_eq!(len, 3);
         assert_eq!(read1, data);
 
@@ -402,7 +402,7 @@ mod tests {
 
         let mut read2 = vec![0; 3];
         track_io!(buffer.seek(SeekFrom::Start(0)))?;
-        let len = track_io!(buffer.read(&mut read))?;
+        let len = track_io!(buffer.read(&mut read2))?;
         assert_eq!(len, 3);
         assert_eq!(read1, read2);
 
