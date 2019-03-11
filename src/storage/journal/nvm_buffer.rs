@@ -27,6 +27,9 @@ pub struct JournalNvmBuffer<N: NonVolatileMemory> {
     //   - ジャーナル領域は定期的に本メソッドを呼び出す
     // - 書き込みバッファのカバー範囲に重複する領域に対して、読み込み要求が発行された場合:
     //   - 書き込みバッファの内容をフラッシュして、内部NVMに同期した後に、該当読み込み命令を処理
+    //   - プログラムのクラッシュを挟んでも、
+    //    （writeが行われていないならば）同じ位置からは同じ値が読み出せるという性質を満たすために必要である
+    //     参考: このモジュール中の `read_crash_read`テスト
     // - 書き込みバッファのカバー範囲に重複しない領域に対して、書き込み要求が発行された場合:
     //   - 現状の書き込みバッファのデータ構造では、ギャップ(i.e., 連続しない複数部分領域)を表現することはできない
     //   - そのため、一度古いバッファの内容をフラッシュした後に、該当書き込み要求を処理するためのバッファを作成する
@@ -367,5 +370,42 @@ mod tests {
     fn new_buffer() -> JournalNvmBuffer<MemoryNvm> {
         let nvm = MemoryNvm::new(vec![0; 10 * 1024]);
         JournalNvmBuffer::new(nvm)
+    }
+
+    #[test]
+    fn read_crash_read() -> TestResult {
+        /*
+         * readを行う前に暗黙にバッファの書き出しを行うことで、
+         * 一度readに成功したならば、プログラムがクラッシュしても、同じ位置からは同じ値を読み込むことができる。
+         *
+         * 本来はnon-volatileなFileNvmを使ってクラッシュを模倣するべきだが、
+         * flush/syncを行わずにファイルをcloseする手段がないので、
+         * ここではvolatileなMemoryNvmを代替として用いている。
+         * （ノート: readメソッドを読み出して値を返すまでの間にクラッシュするテストケースも本来は必要である）
+         */
+        let mut buffer = JournalNvmBuffer::new(MemoryNvm::new(vec![0; 10 * 1024]));
+
+        track_io!(buffer.seek(SeekFrom::Start(0)))?;
+        let mut data = vec![42, 42, 42];
+        track_io!(buffer.write(&mut data))?;
+
+        let mut read1 = vec![0; 3];
+        track_io!(buffer.seek(SeekFrom::Start(0)))?;
+        let len = track_io!(buffer.read(&mut read))?;
+        assert_eq!(len, 3);
+        assert_eq!(read1, data);
+
+        // プログラムのクラッシュと復帰を模倣。
+        let snapshot: Vec<u8> = buffer.nvm().as_bytes().to_vec();
+        std::mem::forget(buffer);
+        let mut buffer = JournalNvmBuffer::new(MemoryNvm::new(snapshot));
+
+        let mut read2 = vec![0; 3];
+        track_io!(buffer.seek(SeekFrom::Start(0)))?;
+        let len = track_io!(buffer.read(&mut read))?;
+        assert_eq!(len, 3);
+        assert_eq!(read1, read2);
+
+        Ok(())
     }
 }
