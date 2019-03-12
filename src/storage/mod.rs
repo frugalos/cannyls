@@ -742,53 +742,109 @@ mod tests {
     }
 
     #[test]
+    /*
+     * GCによりunreleased_headの位置が更新されても、
+     * その新しいunreleased_headをディスクに永続化する前にstorageが終了してしまった場合、
+     * storageの再起動時に古いunreleased_head位置を読み込んでしまう。
+     * 古いunreleased_head位置にはレコード先頭とは限らないデータが書き込まれているため
+     * 再起動時にエラーになってしまう。
+     */
     fn cannyls_panic() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
 
         let nvm = track!(FileNvm::create(
             dir.path().join("test.lusf"),
-            BlockSize::min().ceil_align(1024 * 400 * 6)
+            BlockSize::min().ceil_align(1024 * 100 * 4)
         ))?;
         let mut storage = track!(StorageBuilder::new().journal_region_ratio(0.01).create(nvm))?;
+        assert_eq!(storage.header().journal_region_size, 4096);
+        // putやdeleteなどに伴う自動GCをoffにする（コードと説明の簡単さのためでonのままでも再現できる）。
         storage.set_automatic_gc_mode(false);
 
+        let test_lump_id = id("55");
+
+        /*
+         * 下のjournalの状態 (A)
+         * unreleased_head == 33, head == 33, tail == 66
+         * を目指す準備。
+         */
+        let vec: Vec<u8> = vec![42; 10];
+        let lump_data = track!(LumpData::new_embedded(vec))?;
+        track!(storage.put(&test_lump_id, &lump_data))?;
+        track!(storage.run_side_job_once())?; // GCキューを充填。
+        track!(storage.run_side_job_once())?; // syncを行う（今回は意味がない）。
+        track!(storage.run_side_job_once())?; // GCを行う。
+        track!(storage.run_side_job_once())?; // GCキューを充填する段階で、unreleased headを永続化する。
         {
-            let i = 10000;
-            let vec: Vec<u8> = vec![42; 10];
-            let lump_data = track!(LumpData::new_embedded(vec))?;
-            assert!(storage.put(&id(&i.to_string()), &lump_data)?);
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 33);
+            assert_eq!(snapshot.head, 66);
+            assert_eq!(snapshot.tail, 66);
         }
 
-        track!(storage.run_side_job_once())?;
-
-        {
-            let i = 10000;
-            assert!(storage.delete(&id(&i.to_string()))?);
-        }
-
-        track!(storage.run_side_job_once())?;
-        track!(storage.run_side_job_once())?;
-
-        track!(storage.run_side_job_once())?;
-        track!(storage.run_side_job_once())?;
-
+        // (A)が永続化されていることを確認する。
         std::mem::drop(storage);
-
         let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
         let mut storage = track!(Storage::open(nvm))?;
-
-        for i in 0..120 {
-            let vec: Vec<u8> = vec![42; 150];
-            let lump_data = track!(LumpData::new_embedded(vec))?;
-            assert!(storage.put(&id(&i.to_string()), &lump_data)?);
+        storage.set_automatic_gc_mode(false);
+        {
+            // (A)
+            // ここで重要なのは、unreleased_headが0でない位置に移動していることだけ。
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 33);
+            assert_eq!(snapshot.head, 33); // 再起動後はunreleased_head == headで良い。
+            assert_eq!(snapshot.tail, 66);
         }
 
-        track!(storage.run_side_job_once())?;
+        // journalの状態(B) を目指す。
+        for _ in 0..3 {
+            let vec: Vec<u8> = vec![42; 1000];
+            let lump_data = track!(LumpData::new_embedded(vec))?;
+            track!(storage.put(&test_lump_id, &lump_data))?;
+            track!(storage.delete(&test_lump_id))?;
+        }
+        track!(storage.run_side_job_once())?; // GCキューを充填。
+        track!(storage.run_side_job_once())?; // syncを行う（今回は意味がない）。
+        track!(storage.run_side_job_once())?; // GCを行う。
+        {
+            // (B)
+            // (B)は(C)に入る前準備なので特記するべき状態ではない。
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 3198);
+            assert_eq!(snapshot.head, 3198);
+            assert_eq!(snapshot.tail, 3198);
+        }
+        // ここまでにunreleased_headの永続化は行っていないので
+        // ディスクには33が記録されている。
 
+        // journalの状態(C) を目指す。
+        // tailが一周し、かつ、offset 33の値を上書きする場合
+        let vec: Vec<u8> = vec![42; 2000];
+        let lump_data = track!(LumpData::new_embedded(vec))?;
+        track!(storage.put(&test_lump_id, &lump_data))?;
+        {
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 3198);
+            assert_eq!(snapshot.head, 3198);
+            assert_eq!(snapshot.tail, 2023);
+        }
+        /*
+         * (C)の状況は
+         * 永続化されているjournal recordsの先頭位置は33であるが、
+         * そこを値`42`で埋めてしまったことを意味する。
+         *
+         * いま、新しいunreleased_head 3198を永続化する「前に」
+         * storageがcrashしたとする。
+         */
+
+        // crashを模倣
         std::mem::drop(storage);
-
+        // 再起動を試みる
         let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
+        // journal recordsの先頭位置に大量の42を書き込んだため
+        // これがtagとして認識されてしまい、例外が発生する。
         let _ = track!(Storage::open(nvm))?;
+
         unreachable!();
     }
 }
