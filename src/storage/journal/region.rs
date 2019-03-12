@@ -39,6 +39,7 @@ pub struct JournalRegion<N: NonVolatileMemory> {
     sync_countdown: usize, // `0`になったら`sync()`を呼び出す
     options: JournalRegionOptions,
     gc_after_append: bool,
+    written_header_pos: u64, // 現在永続化済みのHead Position（＝ ジャーナルエントリの開始位置）
 }
 impl<N> JournalRegion<N>
 where
@@ -92,6 +93,7 @@ where
             sync_countdown: options.sync_interval,
             options,
             gc_after_append: true,
+            written_header_pos: header.ring_buffer_head,
         };
         track!(journal.restore(index))?;
         Ok(journal)
@@ -222,12 +224,12 @@ where
             }
         }
 
+        assert_eq!(self.ring_buffer.unreleased_head(), self.ring_buffer.head());
+
         // エントリの回収が行われてhead位置が変わっているので
         // ストレージのヘッダ領域を更新する
-        let header = JournalHeader {
-            ring_buffer_head: self.ring_buffer.head(),
-        };
-        track!(self.header_region.write_header(&header))?;
+        let new_header_pos = self.ring_buffer.head();
+        track!(self.write_new_header_pos(new_header_pos))?;
 
         Ok(())
     }
@@ -252,10 +254,32 @@ where
         Ok(())
     }
 
+    /*
+     * `new_header_pos`をジャーナル領域の`head_position`エントリに書き込み永続化し、
+     * 同時に`written_header_pos`で最後に書き込んだ位置を覚える。
+     *
+     * JournalHeaderRegion::write_headerは、その内部でsyncまで行う。
+     */
+    fn write_new_header_pos(&mut self, new_header_pos: u64) -> Result<()> {
+        let header = JournalHeader {
+            ring_buffer_head: new_header_pos,
+        };
+        track!(self.header_region.write_header(&header))?;
+        self.written_header_pos = new_header_pos;
+        Ok(())
+    }
+
     fn append_record<B>(&mut self, index: &mut LumpIndex, record: &JournalRecord<B>) -> Result<()>
     where
         B: AsRef<[u8]>,
     {
+        if self
+            .ring_buffer
+            .does_enqueue_overwrite(record, self.written_header_pos)
+        {
+            let new_header_pos = self.ring_buffer.unreleased_head();
+            track!(self.write_new_header_pos(new_header_pos))?;
+        }
         let embedded = track!(self.ring_buffer.enqueue(record))?;
         if let Some((lump_id, portion)) = embedded {
             index.insert(lump_id, Portion::Journal(portion));
@@ -317,8 +341,7 @@ where
         }
 
         if let Some(ring_buffer_head) = self.gc_queue.front().map(|x| x.start.as_u64()) {
-            let header = JournalHeader { ring_buffer_head };
-            track!(self.header_region.write_header(&header))?;
+            track!(self.write_new_header_pos(ring_buffer_head))?;
         }
         self.metrics
             .gc_enqueued_records

@@ -42,6 +42,9 @@ impl<N: NonVolatileMemory> JournalRingBuffer<N> {
     pub fn tail(&self) -> u64 {
         self.tail
     }
+    pub fn unreleased_head(&self) -> u64 {
+        self.unreleased_head
+    }
 
     pub fn journal_entries(&mut self) -> Result<(u64, u64, u64, Vec<JournalEntry>)> {
         track_io!(self.nvm.seek(SeekFrom::Start(self.head)))?;
@@ -106,6 +109,27 @@ impl<N: NonVolatileMemory> JournalRingBuffer<N> {
     /// 物理デバイスに同期命令を発行する.
     pub fn sync(&mut self) -> Result<()> {
         track!(self.nvm.sync())
+    }
+
+    /// enqueueメソッドを呼び出した際に、`offset`位置にデータが書き込まれるかどうかを判定する。
+    ///
+    /// trueの時は、enqueueで`offset`位置にデータが書き込まれる。
+    /// falseの時には、enqueueで`offset`位置にデータが書き込まれるとは限らない。
+    pub fn does_enqueue_overwrite<B: AsRef<[u8]>>(
+        &mut self,
+        record: &JournalRecord<B>,
+        offset: u64,
+    ) -> bool {
+        let start_pos = if self.will_overflow(record) {
+            // overflowする場合は書き込み位置は0からになる
+            0
+        } else {
+            self.tail
+        };
+
+        let write_end = start_pos + (record.external_size() + END_OF_RECORDS_SIZE) as u64;
+        let write_end = self.nvm.block_size().ceil_align(write_end);
+        start_pos < offset && offset < write_end
     }
 
     /// レコードをジャーナルの末尾に追記する.

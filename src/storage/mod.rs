@@ -743,11 +743,12 @@ mod tests {
 
     #[test]
     /*
-     * GCによりunreleased_headの位置が更新されても、
-     * その新しいunreleased_headをディスクに永続化する前にstorageが終了してしまった場合、
-     * storageの再起動時に古いunreleased_head位置を読み込んでしまう。
-     * 古いunreleased_head位置にはレコード先頭とは限らないデータが書き込まれているため
-     * 再起動時にエラーになってしまう。
+     * 以前のcannylsでpanicになっていた（PR...を参照 <- あとで書きます）コードが
+     * 現在は問題なく動くことを検証する。
+     *
+     * 以前はunreleased headが長時間永続化されないという問題を抱えており、
+     * それにより本来は更新するべきであるにも関わらず起動して終了までに一度も書き込まれずに、
+     * 再起動後に不適切に古い値をhead positionとして採用してpanicになっていた。
      */
     fn cannyls_panic() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
@@ -818,7 +819,10 @@ mod tests {
         // ディスクには33が記録されている。
 
         // journalの状態(C) を目指す。
-        // tailが一周し、かつ、offset 33の値を上書きする場合
+        // tailが一周し、かつ、offset 33を通過する場合。
+        // 注意: 最後に永続化したoffset 33を通過する場合に上書きしてはならない。
+        // 現在のcannylsではこのような場合に、レコードの書き込み直前に
+        // 最新のunreleased_headで永続化する。
         let vec: Vec<u8> = vec![42; 2000];
         let lump_data = track!(LumpData::new_embedded(vec))?;
         track!(storage.put(&test_lump_id, &lump_data))?;
@@ -828,23 +832,12 @@ mod tests {
             assert_eq!(snapshot.head, 3198);
             assert_eq!(snapshot.tail, 2023);
         }
-        /*
-         * (C)の状況は
-         * 永続化されているjournal recordsの先頭位置は33であるが、
-         * そこを値`42`で埋めてしまったことを意味する。
-         *
-         * いま、新しいunreleased_head 3198を永続化する「前に」
-         * storageがcrashしたとする。
-         */
 
-        // crashを模倣
+        // ストレージを無事に起動することができることを確認
         std::mem::drop(storage);
-        // 再起動を試みる
         let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
-        // journal recordsの先頭位置に大量の42を書き込んだため
-        // これがtagとして認識されてしまい、例外が発生する。
-        let _ = track!(Storage::open(nvm))?;
+        let _storage = track!(Storage::open(nvm))?;
 
-        unreachable!();
+        Ok(())
     }
 }
