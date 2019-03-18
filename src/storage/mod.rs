@@ -700,42 +700,43 @@ mod tests {
 
         let nvm = track!(FileNvm::create(
             dir.path().join("test.lusf"),
-            BlockSize::min().ceil_align(1024 * 400)
+            BlockSize::min().ceil_align(5120 * 100)
         ))?;
         let mut storage = track!(StorageBuilder::new().journal_region_ratio(0.01).create(nvm))?;
         storage.set_automatic_gc_mode(false);
 
         {
             let header = storage.header();
-            assert_eq!(header.journal_region_size, 4096);
+            assert_eq!(header.journal_region_size, 5120);
         }
 
         for i in 0..80 {
             assert!(storage.put(&id(&i.to_string()), &zeroed_data(42))?);
-            storage.journal_sync().unwrap();
         }
         for i in 0..50 {
             assert!(storage.delete(&id(&i.to_string()))?);
-            storage.journal_sync().unwrap();
         }
-
         {
-            let snapshot = storage.journal_snapshot().unwrap();
-            // [start of the ring buffer] u_h, head ---- tail -- [end of the ring buffer]
+            let snapshot = track!(storage.journal_snapshot())?;
             assert_eq!(snapshot.unreleased_head, 0);
             assert_eq!(snapshot.head, 0);
             assert_eq!(snapshot.tail, 3290);
         }
 
-        storage.journal_gc().unwrap();
-        storage.journal_sync().unwrap();
-
+        track!(storage.journal_gc())?;
         {
-            let snapshot = storage.journal_snapshot().unwrap();
-            // [start of the ring buffer] -- tail -- u_h --  head --- [end of the ring buffer]
+            let snapshot = track!(storage.journal_snapshot())?;
             assert_eq!(snapshot.unreleased_head, 3290);
             assert_eq!(snapshot.head, 3290);
-            assert_eq!(snapshot.tail, 560);
+            assert_eq!(snapshot.tail, 4130);
+        }
+
+        track!(storage.journal_gc())?;
+        {
+            let snapshot = track!(storage.journal_snapshot())?;
+            assert_eq!(snapshot.unreleased_head, 4130);
+            assert_eq!(snapshot.head, 4130);
+            assert_eq!(snapshot.tail, 392);
         }
 
         Ok(())
