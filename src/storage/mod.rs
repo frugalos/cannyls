@@ -700,43 +700,43 @@ mod tests {
 
         let nvm = track!(FileNvm::create(
             dir.path().join("test.lusf"),
-            BlockSize::min().ceil_align(5120 * 100)
+            BlockSize::min().ceil_align(1024 * 400)
         ))?;
         let mut storage = track!(StorageBuilder::new().journal_region_ratio(0.01).create(nvm))?;
         storage.set_automatic_gc_mode(false);
 
         {
             let header = storage.header();
-            assert_eq!(header.journal_region_size, 5120);
+            assert_eq!(header.journal_region_size, 4096);
         }
 
-        for i in 0..80 {
+        for i in 0..60 {
             assert!(storage.put(&id(&i.to_string()), &zeroed_data(42))?);
         }
-        for i in 0..50 {
+        for i in 0..20 {
             assert!(storage.delete(&id(&i.to_string()))?);
         }
         {
             let snapshot = track!(storage.journal_snapshot())?;
             assert_eq!(snapshot.unreleased_head, 0);
             assert_eq!(snapshot.head, 0);
-            assert_eq!(snapshot.tail, 3290);
+            assert_eq!(snapshot.tail, 2100);
         }
 
         track!(storage.journal_gc())?;
         {
             let snapshot = track!(storage.journal_snapshot())?;
-            assert_eq!(snapshot.unreleased_head, 3290);
-            assert_eq!(snapshot.head, 3290);
-            assert_eq!(snapshot.tail, 4130);
+            assert_eq!(snapshot.unreleased_head, 2100);
+            assert_eq!(snapshot.head, 2100);
+            assert_eq!(snapshot.tail, 3220);
         }
 
         track!(storage.journal_gc())?;
         {
             let snapshot = track!(storage.journal_snapshot())?;
-            assert_eq!(snapshot.unreleased_head, 4130);
-            assert_eq!(snapshot.head, 4130);
-            assert_eq!(snapshot.tail, 392);
+            assert_eq!(snapshot.unreleased_head, 3220);
+            assert_eq!(snapshot.head, 3220);
+            assert_eq!(snapshot.tail, 784);
         }
 
         Ok(())
