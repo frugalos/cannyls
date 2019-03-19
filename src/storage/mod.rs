@@ -749,7 +749,7 @@ mod tests {
      * 古いunreleased_head位置にはレコード先頭とは限らないデータが書き込まれているため
      * 再起動時にエラーになってしまう。
      */
-    fn cannyls_panic() -> TestResult {
+    fn unintended_overwriting_head_position_makes_storage_corrupted() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
 
         let nvm = track!(FileNvm::create(
@@ -815,29 +815,25 @@ mod tests {
             assert_eq!(snapshot.tail, 3198);
         }
         // ここまでにunreleased_headの永続化は行っていないので
-        // ディスクには33が記録されている。
+        // ジャーナル領域のhead positionフィールドは位置33を指したままである。
+        // （＝ この状態で再起動が行われると、ジャーナルレコード領域の33を先頭レコードとして読み込む）
 
-        // journalの状態(C) を目指す。
-        // tailが一周し、かつ、offset 33の値を上書きする場合
+        // tailを一周させ、head positionフィールドの指す位置33に対して値42を上書きし、状態(C)を作る。
         let vec: Vec<u8> = vec![42; 2000];
         let lump_data = track!(LumpData::new_embedded(vec))?;
         track!(storage.put(&test_lump_id, &lump_data))?;
         {
+            // (C)
+            // journal recordsの先頭位置は33として永続化されているが、
+            // その位置33の周辺を値`42`で上書きした状態。
             let snapshot = storage.journal_snapshot().unwrap();
             assert_eq!(snapshot.unreleased_head, 3198);
             assert_eq!(snapshot.head, 3198);
             assert_eq!(snapshot.tail, 2023);
         }
-        /*
-         * (C)の状況は
-         * 永続化されているjournal recordsの先頭位置は33であるが、
-         * そこを値`42`で埋めてしまったことを意味する。
-         *
-         * いま、新しいunreleased_head 3198を永続化する「前に」
-         * storageがcrashしたとする。
-         */
 
-        // crashを模倣
+        // 最新のunreleased_head 3198をhead positionフィールドに永続化する「前に」
+        // storageがcrashする状態を模倣する。
         std::mem::drop(storage);
         // 再起動を試みる
         let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
