@@ -215,7 +215,7 @@ where
         // 上のloopを抜けた後では
         // `unreleased_head`と`head`の間のエントリは全て再配置済みである。
         // そこで現在の`head`の値をジャーナルエントリ開始位置として永続化し、
-        // `unreheased_head`も更新する。
+        // `unreleased_head`も更新する。
         let ring_buffer_head = self.ring_buffer.head();
         track!(self.write_journal_header(ring_buffer_head))?;
 
@@ -223,7 +223,7 @@ where
     }
 
     /// `ring_buffer_head`をジャーナルエントリ開始位置として永続化し、
-    /// `unreheased_head`を`ring_buffer_head`に移動する。
+    /// `unreleased_head`を`ring_buffer_head`に移動する。
     fn write_journal_header(&mut self, ring_buffer_head: u64) -> Result<()> {
         let header = JournalHeader { ring_buffer_head };
         track!(self.header_region.write_header(&header))?;
@@ -309,7 +309,7 @@ where
         // GCキューが空 `gc_queue.is_empty() == true`
         // すなわち `unreleased_head` と `head` の間のレコード群は全て再配置済みであるため、
         // 現在のhead位置をジャーナルエントリの開始位置として永続化し、
-        // `unreheased_head`の位置も更新する。
+        // `unreleased_head`の位置も更新する。
         let ring_buffer_head = self.ring_buffer.head();
         track!(self.write_journal_header(ring_buffer_head))?;
 
