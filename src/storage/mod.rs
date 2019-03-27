@@ -741,4 +741,110 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    /*
+     * GCによりunreleased_headの位置が更新されても、
+     * その新しいunreleased_headをディスクに永続化する前にstorageが終了してしまった場合、
+     * storageの再起動時に古いunreleased_head位置を読み込んでしまう。
+     * 古いunreleased_head位置にはレコード先頭とは限らないデータが書き込まれているため
+     * 再起動時にエラーになってしまう。
+     */
+    fn unintended_overwriting_head_position_makes_storage_corrupted() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+
+        let nvm = track!(FileNvm::create(
+            dir.path().join("test.lusf"),
+            BlockSize::min().ceil_align(1024 * 100 * 4)
+        ))?;
+        let mut storage = track!(StorageBuilder::new().journal_region_ratio(0.01).create(nvm))?;
+        assert_eq!(storage.header().journal_region_size, 4096);
+        // putやdeleteなどに伴う自動GCをoffにする（コードと説明の簡単さのためでonのままでも再現できる）。
+        storage.set_automatic_gc_mode(false);
+
+        let test_lump_id = id("55");
+
+        /*
+         * 下のjournalの状態 (A)
+         * unreleased_head == 33, head == 33, tail == 66
+         * を目指す準備。
+         */
+        let vec: Vec<u8> = vec![42; 10];
+        let lump_data = track!(LumpData::new_embedded(vec))?;
+        track!(storage.put(&test_lump_id, &lump_data))?;
+        track!(storage.run_side_job_once())?; // GCキューを充填。
+        track!(storage.run_side_job_once())?; // syncを行う（今回は意味がない）。
+        track!(storage.run_side_job_once())?; // GCを行う。
+        track!(storage.run_side_job_once())?; // GCキューを充填する段階で、unreleased headを永続化する。
+        {
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 33);
+            assert_eq!(snapshot.head, 66);
+            assert_eq!(snapshot.tail, 66);
+        }
+
+        // (A)が永続化されていることを確認する。
+        std::mem::drop(storage);
+        let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
+        let mut storage = track!(Storage::open(nvm))?;
+        storage.set_automatic_gc_mode(false);
+        {
+            // (A)
+            // ここで重要なのは、unreleased_headが0でない位置に移動していることだけ。
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 33);
+            assert_eq!(snapshot.head, 33); // 再起動後はunreleased_head == headで良い。
+            assert_eq!(snapshot.tail, 66);
+        }
+
+        // journalの状態(B) を目指す。
+        for _ in 0..3 {
+            let vec: Vec<u8> = vec![42; 1000];
+            let lump_data = track!(LumpData::new_embedded(vec))?;
+            track!(storage.put(&test_lump_id, &lump_data))?;
+            track!(storage.delete(&test_lump_id))?;
+        }
+        track!(storage.run_side_job_once())?; // GCキューを充填。
+        track!(storage.run_side_job_once())?; // syncを行う（今回は意味がない）。
+        track!(storage.run_side_job_once())?; // GCを行う。
+        {
+            // (B)
+            // (B)は(C)に入る前準備なので特記するべき状態ではない。
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 3198);
+            assert_eq!(snapshot.head, 3198);
+            assert_eq!(snapshot.tail, 3198);
+        }
+        // ここまでにunreleased_headの永続化は行っていないので
+        // ジャーナル領域のhead positionフィールドは位置33を指したままである。
+        // （＝ この状態で再起動が行われると、ジャーナルレコード領域の33を先頭レコードとして読み込む）
+
+        // tailを一周させ、head positionフィールドの指す位置33に対して値42を上書きし、状態(C)を作る。
+        let vec: Vec<u8> = vec![42; 2000];
+        let lump_data = track!(LumpData::new_embedded(vec))?;
+        track!(storage.put(&test_lump_id, &lump_data))?;
+        {
+            // (C)
+            // journal recordsの先頭位置は33として永続化されているが、
+            // その位置33の周辺を値`42`で上書きした状態。
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 3198);
+            assert_eq!(snapshot.head, 3198);
+            assert_eq!(snapshot.tail, 2023);
+        }
+
+        // 最新のunreleased_head 3198をhead positionフィールドに永続化する「前に」
+        // storageがcrashする状態を模倣する。
+        std::mem::drop(storage);
+        // 再起動を試みる
+        let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
+        // journal recordsの先頭位置に大量の42を書き込んだため
+        // これがtagとして認識されてしまい、`ErrorKind::StorageCorrupted`エラーが発生する。
+        // 注意: 42はtagではない
+        // https://github.com/frugalos/cannyls/wiki/Storage-Format
+        let error = track!(Storage::open(nvm)).unwrap_err();
+        assert!(*error.kind() == ErrorKind::StorageCorrupted);
+
+        Ok(())
+    }
 }
