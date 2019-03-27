@@ -182,17 +182,6 @@ where
                 break;
             }
         }
-        if let Some(next) = self.gc_queue.front() {
-            // gc_queueにまだエントリがある場合には
-            // そのエントリ以降が処理対象になるのでunreleased_headを移動させる。
-            self.ring_buffer.release_bytes_until(next.start.as_u64());
-        } else {
-            // gc_queueにエントリがない場合には
-            // GC対象になるエントリが存在しないということなので
-            // unreleased_head = head が成立するようにする。
-            let head = self.ring_buffer.head();
-            self.ring_buffer.release_bytes_until(head);
-        }
 
         Ok(())
     }
@@ -222,13 +211,23 @@ where
             }
         }
 
-        // エントリの回収が行われてhead位置が変わっているので
-        // ストレージのヘッダ領域を更新する
-        let header = JournalHeader {
-            ring_buffer_head: self.ring_buffer.head(),
-        };
-        track!(self.header_region.write_header(&header))?;
+        // `gc_all_entries_in_queue`は`gc_queue`が空になるまで処理を行うため、
+        // 上のloopを抜けた後では
+        // `unreleased_head`と`head`の間のエントリは全て再配置済みである。
+        // そこで現在の`head`の値をジャーナルエントリ開始位置として永続化し、
+        // `unreleased_head`も更新する。
+        let ring_buffer_head = self.ring_buffer.head();
+        track!(self.write_journal_header(ring_buffer_head))?;
 
+        Ok(())
+    }
+
+    /// `ring_buffer_head`をジャーナルエントリ開始位置として永続化し、
+    /// `unreleased_head`を`ring_buffer_head`に移動する。
+    fn write_journal_header(&mut self, ring_buffer_head: u64) -> Result<()> {
+        let header = JournalHeader { ring_buffer_head };
+        track!(self.header_region.write_header(&header))?;
+        self.ring_buffer.release_bytes_until(ring_buffer_head);
         Ok(())
     }
 
@@ -305,7 +304,14 @@ where
     ///
     /// 必要に応じて、ジャーナルヘッダの更新も行う.
     fn fill_gc_queue(&mut self) -> Result<()> {
-        debug_assert!(self.gc_queue.is_empty());
+        assert!(self.gc_queue.is_empty());
+
+        // GCキューが空 `gc_queue.is_empty() == true`
+        // すなわち `unreleased_head` と `head` の間のレコード群は全て再配置済みであるため、
+        // 現在のhead位置をジャーナルエントリの開始位置として永続化し、
+        // `unreleased_head`の位置も更新する。
+        let ring_buffer_head = self.ring_buffer.head();
+        track!(self.write_journal_header(ring_buffer_head))?;
 
         if self.ring_buffer.is_empty() {
             return Ok(());
@@ -316,10 +322,6 @@ where
             self.gc_queue.push_back(entry);
         }
 
-        if let Some(ring_buffer_head) = self.gc_queue.front().map(|x| x.start.as_u64()) {
-            let header = JournalHeader { ring_buffer_head };
-            track!(self.header_region.write_header(&header))?;
-        }
         self.metrics
             .gc_enqueued_records
             .add_u64(self.gc_queue.len() as u64);

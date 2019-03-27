@@ -710,32 +710,33 @@ mod tests {
             assert_eq!(header.journal_region_size, 4096);
         }
 
-        for i in 0..80 {
+        for i in 0..60 {
             assert!(storage.put(&id(&i.to_string()), &zeroed_data(42))?);
-            storage.journal_sync().unwrap();
         }
-        for i in 0..50 {
+        for i in 0..20 {
             assert!(storage.delete(&id(&i.to_string()))?);
-            storage.journal_sync().unwrap();
         }
-
         {
-            let snapshot = storage.journal_snapshot().unwrap();
-            // [start of the ring buffer] u_h, head ---- tail -- [end of the ring buffer]
+            let snapshot = track!(storage.journal_snapshot())?;
             assert_eq!(snapshot.unreleased_head, 0);
             assert_eq!(snapshot.head, 0);
-            assert_eq!(snapshot.tail, 3290);
+            assert_eq!(snapshot.tail, 2100);
         }
 
-        storage.journal_gc().unwrap();
-        storage.journal_sync().unwrap();
-
+        track!(storage.journal_gc())?;
         {
-            let snapshot = storage.journal_snapshot().unwrap();
-            // [start of the ring buffer] -- tail -- u_h --  head --- [end of the ring buffer]
-            assert_eq!(snapshot.unreleased_head, 3290);
-            assert_eq!(snapshot.head, 3290);
-            assert_eq!(snapshot.tail, 560);
+            let snapshot = track!(storage.journal_snapshot())?;
+            assert_eq!(snapshot.unreleased_head, 2100);
+            assert_eq!(snapshot.head, 2100);
+            assert_eq!(snapshot.tail, 3220);
+        }
+
+        track!(storage.journal_gc())?;
+        {
+            let snapshot = track!(storage.journal_snapshot())?;
+            assert_eq!(snapshot.unreleased_head, 3220);
+            assert_eq!(snapshot.head, 3220);
+            assert_eq!(snapshot.tail, 784);
         }
 
         Ok(())
@@ -743,13 +744,16 @@ mod tests {
 
     #[test]
     /*
-     * GCによりunreleased_headの位置が更新されても、
-     * その新しいunreleased_headをディスクに永続化する前にstorageが終了してしまった場合、
-     * storageの再起動時に古いunreleased_head位置を読み込んでしまう。
-     * 古いunreleased_head位置にはレコード先頭とは限らないデータが書き込まれているため
-     * 再起動時にエラーになってしまう。
+     * cannyls 0.9.2以前では
+     * PR23 https://github.com/frugalos/cannyls/pull/23
+     * が指摘する問題によりpanicしていた。
+     * その問題が発生しないことを確認するためのテスト。
+     * （発生していた問題というのは、
+     * ジャーナルヘッドに永続化されている`head_position`の値と
+     * これに対応するメモリ上のフィールド`unreleased_head`の値にズレが生じることに起因する。
+     * 詳細についてはPR23を参考にされたい。）
      */
-    fn unintended_overwriting_head_position_makes_storage_corrupted() -> TestResult {
+    fn confirm_that_the_problem_of_pr23_is_resolved() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
 
         let nvm = track!(FileNvm::create(
@@ -814,35 +818,40 @@ mod tests {
             assert_eq!(snapshot.head, 3198);
             assert_eq!(snapshot.tail, 3198);
         }
-        // ここまでにunreleased_headの永続化は行っていないので
-        // ジャーナル領域のhead positionフィールドは位置33を指したままである。
-        // （＝ この状態で再起動が行われると、ジャーナルレコード領域の33を先頭レコードとして読み込む）
+        /*
+         * ジャーナル領域のhead positionはunreleased_headの値と常に等しいため
+         * この段階ではジャーナル領域のhead positionフィールドは位置3198を指している。
+         * これ以降ではPR23と同様に位置33に対して値42を書き込み、不正なtagとして認識させることを試みるが、
+         * cannyls 0.9.2以降では問題にならない。
+         *
+         * 注意:
+         *  cannyls 0.9.2以前では、head positionがこの段階で位置3198を指す保証はない。
+         *  実際として、PR23の段階では古いunreleased_headの値33を指していた。
+         */
 
-        // tailを一周させ、head positionフィールドの指す位置33に対して値42を上書きし、状態(C)を作る。
+        // tailを一周させ、位置33に対して値42を書き込む。
         let vec: Vec<u8> = vec![42; 2000];
         let lump_data = track!(LumpData::new_embedded(vec))?;
         track!(storage.put(&test_lump_id, &lump_data))?;
         {
             // (C)
-            // journal recordsの先頭位置は33として永続化されているが、
-            // その位置33の周辺を値`42`で上書きした状態。
+            // 位置33の周辺を値`42`で上書きした状態。
             let snapshot = storage.journal_snapshot().unwrap();
             assert_eq!(snapshot.unreleased_head, 3198);
             assert_eq!(snapshot.head, 3198);
             assert_eq!(snapshot.tail, 2023);
         }
 
-        // 最新のunreleased_head 3198をhead positionフィールドに永続化する「前に」
-        // storageがcrashする状態を模倣する。
+        // storageがcrashして再起動する操作群を模倣する。
         std::mem::drop(storage);
-        // 再起動を試みる
         let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
-        // journal recordsの先頭位置に大量の42を書き込んだため
-        // これがtagとして認識されてしまい、`ErrorKind::StorageCorrupted`エラーが発生する。
-        // 注意: 42はtagではない
-        // https://github.com/frugalos/cannyls/wiki/Storage-Format
-        let error = track!(Storage::open(nvm)).unwrap_err();
-        assert!(*error.kind() == ErrorKind::StorageCorrupted);
+        let mut storage = track!(Storage::open(nvm))?;
+        {
+            let snapshot = storage.journal_snapshot().unwrap();
+            assert_eq!(snapshot.unreleased_head, 3198);
+            assert_eq!(snapshot.head, 3198);
+            assert_eq!(snapshot.tail, 2023);
+        }
 
         Ok(())
     }
