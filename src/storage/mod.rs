@@ -248,9 +248,9 @@ where
         // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
         // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
         track!(self
-               .journal_region
-               .records_delete_range(&mut self.lump_index, range))?;
-        
+            .journal_region
+            .records_delete_range(&mut self.lump_index, range))?;
+
         for lump_id in &targets {
             if let Some(portion) = self.lump_index.remove(lump_id) {
                 self.metrics.delete_lumps.increment();
@@ -262,7 +262,7 @@ where
                     self.data_region.delete(portion);
                 }
             }
-        }        
+        }
 
         Ok(targets)
     }
@@ -522,9 +522,10 @@ mod tests {
 
         // マイナーバージョンを減らして、ヘッダを上書きする
         {
-            header.minor_version = header.minor_version.checked_sub(1).expect(
-                "このテストは`MINOR_VERSION >= 1`であることを前提としている",
-            );
+            header.minor_version = header
+                .minor_version
+                .checked_sub(1)
+                .expect("このテストは`MINOR_VERSION >= 1`であることを前提としている");
             let file = track_any_err!(OpenOptions::new().write(true).open(&path))?;
             track!(header.write_to(file))?;
         }
