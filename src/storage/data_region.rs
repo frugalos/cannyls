@@ -24,6 +24,11 @@ impl<N> DataRegion<N>
 where
     N: NonVolatileMemory,
 {
+    #[allow(dead_code)]
+    pub(crate) fn allocator(&self) -> &DataPortionAllocator {
+        &self.allocator
+    }
+
     /// 新しい`DataRegion`インスタンスを生成する.
     pub fn new(metric_builder: &MetricBuilder, allocator: DataPortionAllocator, nvm: N) -> Self {
         let capacity = allocator.metrics().capacity_bytes;

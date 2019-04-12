@@ -23,7 +23,7 @@ pub(crate) use self::data_region::DataRegionLumpData; // `lump`モジュール�
 use self::data_region::DataRegion;
 use self::index::LumpIndex;
 use self::journal::JournalRegion;
-use self::portion::Portion;
+use self::portion::{DataPortion, Portion};
 use block::BlockSize;
 use lump::{LumpData, LumpDataInner, LumpHeader, LumpId};
 use metrics::StorageMetrics;
@@ -88,6 +88,20 @@ impl<N> Storage<N>
 where
     N: NonVolatileMemory,
 {
+    // Method for tests
+    #[allow(dead_code)]
+    fn allocated_data_portions(&self) -> Vec<DataPortion> {
+        self.lump_index.data_portions().collect()
+    }
+    #[allow(dead_code)]
+    fn is_reusable_data_portion(&self, portion: &DataPortion) -> bool {
+        !self.data_region.allocator().is_allocated_portion(portion)
+    }
+    #[allow(dead_code)]
+    fn journal_region(&self) -> &JournalRegion<N> {
+        &self.journal_region
+    }
+
     pub(crate) fn new(
         header: StorageHeader,
         journal_region: JournalRegion<N>,
@@ -194,7 +208,8 @@ where
     /// NVMへの書き込み前に、データをブロック境界にアライメントするためのメモリコピーが余分に発生してしまう.
     /// それを避けたい場合には、`Storage::allocate_lump_data`メソッドを使用して`LumpData`を生成すると良い.
     pub fn put(&mut self, lump_id: &LumpId, data: &LumpData) -> Result<bool> {
-        let updated = track!(self.delete_if_exists(lump_id, false))?;
+        // put時も上書きするならばdelete recordを書き込む
+        let updated = track!(self.delete_if_exists(lump_id))?;
         match data.as_inner() {
             LumpDataInner::JournalRegion(data) => {
                 track!(self
@@ -224,7 +239,7 @@ where
     /// 不整合ないしI/O周りで致命的な問題が発生している可能性があるので、
     /// 以後はこのインスタンスの使用を中止するのが望ましい.
     pub fn delete(&mut self, lump_id: &LumpId) -> Result<bool> {
-        track!(self.delete_if_exists(lump_id, true))
+        track!(self.delete_if_exists(lump_id))
     }
 
     /// LumpIdのrange [start..end) を用いて、これに含まれるLumpIdを全て削除する。
@@ -245,24 +260,23 @@ where
     pub fn delete_range(&mut self, range: Range<LumpId>) -> Result<Vec<LumpId>> {
         let targets = self.lump_index.list_range(range.clone());
 
-        // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
-        // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
-        track!(self
-               .journal_region
-               .records_delete_range(&mut self.lump_index, range))?;
-        
+        let mut deleted_data_portions: Vec<DataPortion> = Vec::new();
+
         for lump_id in &targets {
             if let Some(portion) = self.lump_index.remove(lump_id) {
-                self.metrics.delete_lumps.increment();
-
-                if let Portion::Data(portion) = portion {
-                    // DataRegion::deleteはメモリアロケータに対する解放要求をするのみで
-                    // ディスクにアクセスすることはない。
-                    // （管理領域から外すだけで、例えばディスク上の値を0クリアするようなことはない）
-                    self.data_region.delete(portion);
+                if let Portion::Data(data_portion) = portion {
+                    deleted_data_portions.push(data_portion);
                 }
             }
-        }        
+        }
+
+        // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
+        // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
+        track!(self.journal_region.records_delete_range(
+            &mut self.lump_index,
+            range,
+            deleted_data_portions
+        ))?;
 
         Ok(targets)
     }
@@ -300,12 +314,20 @@ where
         Ok(data)
     }
 
+    /// 永続化済みかつ未開放のDelete及びDeleteRangeエントリに紐づくPortionを全て解放する。
+    pub(crate) fn notify_all_unreleased_entries(&mut self) {
+        for data_portion in self.journal_region.take_all_unreleased_data_portions() {
+            self.data_region.delete(data_portion);
+        }
+    }
+
     /// 補助的な処理を一単位実行する.
     ///
     /// このメソッドを呼ばなくても動作上は問題はないが、
     /// リソースが空いているタイミングで実行することによって、
     /// 全体的な性能を改善できる可能性がある.
     pub fn run_side_job_once(&mut self) -> Result<()> {
+        self.notify_all_unreleased_entries();
         track!(self.journal_region.run_side_job_once(&mut self.lump_index))?;
         Ok(())
     }
@@ -325,7 +347,8 @@ where
     /// 小規模のGCが走る（正確には `JournalRegion::gc_once`）ので、
     /// このGCを手動で呼び出す必要はない。
     pub fn journal_gc(&mut self) -> Result<()> {
-        self.journal_region.gc_all_entries(&mut self.lump_index)
+        track!(self.journal_region.gc_all_entries(&mut self.lump_index))?;
+        Ok(())
     }
 
     /// ジャーナル領域のスナップショットを取得する。
@@ -360,6 +383,8 @@ where
             .journal_region
             .records_put(&mut self.lump_index, lump_id, portion)
             .map_err(|e| {
+                // ジャーナルへのPUTの書き込みに失敗した場合なので
+                // `portion`は直ちに再利用可能とできる。
                 self.data_region.delete(portion);
                 e
             }))?;
@@ -368,17 +393,22 @@ where
         Ok(())
     }
 
-    fn delete_if_exists(&mut self, lump_id: &LumpId, do_record: bool) -> Result<bool> {
+    fn delete_if_exists(&mut self, lump_id: &LumpId) -> Result<bool> {
         if let Some(portion) = self.lump_index.remove(lump_id) {
             self.metrics.delete_lumps.increment();
-            if do_record {
-                track!(self
-                    .journal_region
-                    .records_delete(&mut self.lump_index, lump_id,))?;
-            }
-            if let Portion::Data(portion) = portion {
-                self.data_region.delete(portion);
-            }
+
+            let mut deleted_data_portion = if let Portion::Data(data_portion) = portion {
+                Some(data_portion)
+            } else {
+                None
+            };
+
+            track!(self.journal_region.records_delete(
+                &mut self.lump_index,
+                lump_id,
+                deleted_data_portion
+            ))?;
+
             Ok(true)
         } else {
             Ok(false)
@@ -398,6 +428,180 @@ mod tests {
     use lump::{LumpData, LumpId};
     use nvm::{FileNvm, SharedMemoryNvm};
     use ErrorKind;
+
+    /*
+     * ジャーナル領域へのPUTをDeleteまたはDeleteRangeで削除する場合は
+     * アロケータによるPortion管理とは一切関係がないため、解放する必要はない。
+     * 実際にそのような挙動になっているかどうかをテストする。
+     */
+    #[test]
+    fn deleting_embedded_put_never_requires_release() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+
+        {
+            // 埋め込みPUTでない場合は解放要求が得られることを先に確認する。
+            let nvm = track!(FileNvm::create(
+                dir.path().join("put_test.lusf"),
+                BlockSize::min().ceil_align(1024 * 1024)
+            ))?;
+            let mut storage = track!(Storage::create(nvm))?;
+
+            assert!(track!(storage.put(&id("000"), &zeroed_data(42)))?);
+            assert!(track!(storage.delete(&id("000")))?);
+
+            track!(storage.journal_gc())?;
+            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 1);
+        }
+        {
+            // 埋め込みPUTの場合は解放要求がないことを確認する。
+            let nvm = track!(FileNvm::create(
+                dir.path().join("embed_put_test.lusf"),
+                BlockSize::min().ceil_align(1024 * 1024)
+            ))?;
+            let mut storage = track!(Storage::create(nvm))?;
+
+            assert!(track!(storage.put(&id("000"), &data("bar")))?);
+            assert!(track!(storage.delete(&id("000")))?);
+
+            track!(storage.journal_gc())?;
+            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 0);
+
+            for i in 10..100 {
+                assert!(track!(storage.put(&LumpId::new(i), &data(&i.to_string())))?);
+            }
+            assert_eq!(
+                track!(storage.delete_range(Range {
+                    start: LumpId::new(10),
+                    end: LumpId::new(100)
+                }))?,
+                (10..100).map(LumpId::new).collect::<Vec<LumpId>>(),
+            );
+
+            track!(storage.journal_gc())?;
+            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 0);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn overwriting_put_enqueues_delete_record() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+
+        // create
+        let nvm = track!(FileNvm::create(
+            dir.path().join("test.lusf"),
+            BlockSize::min().ceil_align(1024 * 1024)
+        ))?;
+        let mut storage = track!(Storage::create(nvm))?;
+
+        // LumpIdに対する新規書き込み時には、PUTレコードしか書き込まない。
+        assert!(track!(storage.put(&id("000"), &zeroed_data(1)))?);
+        let snapshot = track!(storage.journal_snapshot())?;
+        let records: Vec<JournalRecord<Vec<u8>>> = snapshot
+            .entries
+            .into_iter()
+            .map(|entry| entry.record)
+            .collect();
+        assert_eq!(records, vec![make_put_record(0, 0, 1)]);
+
+        // LumpIdに対する上書き書き込み時には、DELETEレコードも書き込まれる。
+        assert!(!track!(storage.put(&id("000"), &zeroed_data(1)))?);
+        let snapshot = track!(storage.journal_snapshot())?;
+        let records: Vec<JournalRecord<Vec<u8>>> = snapshot
+            .entries
+            .into_iter()
+            .map(|entry| entry.record)
+            .collect();
+        assert_eq!(
+            records,
+            vec![
+                make_put_record(0, 0, 1),
+                make_delete_record(0),
+                make_put_record(0, 1, 1)
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn confirm_delayed_releasing_behavior() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+
+        {
+            // create
+            let nvm = track!(FileNvm::create(
+                dir.path().join("test.lusf"),
+                BlockSize::min().ceil_align(1024 * 1024)
+            ))?;
+            let mut storage = track!(Storage::create(nvm))?;
+
+            assert!(track!(storage.put(&id("000"), &zeroed_data(1)))?);
+            assert!(track!(storage.delete(&id("000")))?);
+            assert!(track!(storage.put(&id("001"), &zeroed_data(1)))?);
+            assert!(track!(storage.delete(&id("001")))?);
+
+            assert!(storage
+                .journal_region()
+                .unreleased_data_portions()
+                .is_empty());
+        }
+        {
+            // reboot
+            let nvm = track!(FileNvm::open(dir.path().join("test.lusf")))?;
+            let mut storage = track!(Storage::open(nvm))?;
+
+            storage.set_automatic_gc_mode(false);
+
+            assert!(storage
+                .journal_region()
+                .unreleased_data_portions()
+                .is_empty());
+
+            assert!(track!(storage.put(&id("002"), &zeroed_data(1)))?);
+            assert!(track!(storage.put(&id("003"), &zeroed_data(1)))?);
+            assert!(storage
+                .journal_region()
+                .unreleased_data_portions()
+                .is_empty());
+            let data_portions = storage.allocated_data_portions();
+            assert!(data_portions
+                .iter()
+                .all(|e| !storage.is_reusable_data_portion(e)));
+
+            assert!(track!(storage.delete(&id("002")))?);
+            assert!(track!(storage.delete(&id("003")))?);
+            assert!(storage
+                .journal_region()
+                .unreleased_data_portions()
+                .is_empty());
+
+            // deleteしただけでは、永続化したかどうか分からないため、アロケータが解放できない。
+            storage.notify_all_unreleased_entries();
+            assert!(storage
+                .journal_region()
+                .unreleased_data_portions()
+                .is_empty());
+            assert!(data_portions
+                .iter()
+                .all(|e| !storage.is_reusable_data_portion(e)));
+
+            // GCの過程でdeleteレコードを読み込めた場合は解放できる。
+            track!(storage.journal_gc())?;
+            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 2);
+            storage.notify_all_unreleased_entries();
+            assert!(storage
+                .journal_region()
+                .unreleased_data_portions()
+                .is_empty());
+            assert!(data_portions
+                .iter()
+                .all(|e| storage.is_reusable_data_portion(e)));
+        }
+
+        Ok(())
+    }
 
     #[test]
     fn it_works() -> TestResult {
@@ -854,5 +1058,19 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    // Helper functions
+    fn make_put_record(lump_id: u128, start: u32, len: u16) -> JournalRecord<Vec<u8>> {
+        JournalRecord::<Vec<u8>>::Put(
+            LumpId::new(lump_id),
+            self::portion::DataPortion {
+                start: Address::from(start),
+                len,
+            },
+        )
+    }
+    fn make_delete_record(lump_id: u128) -> JournalRecord<Vec<u8>> {
+        JournalRecord::Delete(LumpId::new(lump_id))
     }
 }

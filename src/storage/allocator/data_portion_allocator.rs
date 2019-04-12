@@ -195,7 +195,7 @@ impl DataPortionAllocator {
     //    現在の実装では `nth(0)` を用いているため、
     //    フリーリスト内の相異なる部分領域が互いに素であるという前提が必要である。
     //    ただしこの前提は通常のCannyLSの使用であれば成立する。
-    fn is_allocated_portion(&self, portion: &DataPortion) -> bool {
+    pub(crate) fn is_allocated_portion(&self, portion: &DataPortion) -> bool {
         let key = EndBasedFreePortion(FreePortion::new(portion.start, 0));
         if let Some(next) = self.end_to_free.range((Excluded(&key), Unbounded)).nth(0) {
             // 終端位置が `portion.start` を超えるfree portionのうち最小のもの `next` については

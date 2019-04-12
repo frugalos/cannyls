@@ -1,9 +1,11 @@
+pub use self::delayed_release_info::DelayedReleaseInfo;
 pub use self::header::{JournalHeader, JournalHeaderRegion};
 pub use self::nvm_buffer::JournalNvmBuffer;
 pub use self::options::JournalRegionOptions;
 pub use self::record::{JournalEntry, JournalRecord};
 pub use self::region::JournalRegion;
 
+pub mod delayed_release_info;
 mod header;
 mod nvm_buffer;
 mod options;

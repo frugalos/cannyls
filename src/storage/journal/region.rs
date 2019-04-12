@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::ops::Range;
 
+use super::delayed_release_info::DelayedReleaseInfo;
 use super::options::JournalRegionOptions;
 use super::record::{JournalEntry, JournalRecord, EMBEDDED_DATA_OFFSET};
 use super::ring_buffer::JournalRingBuffer;
@@ -39,11 +40,27 @@ pub struct JournalRegion<N: NonVolatileMemory> {
     sync_countdown: usize, // `0`になったら`sync()`を呼び出す
     options: JournalRegionOptions,
     gc_after_append: bool,
+    data_for_delayed_release: DelayedReleaseInfo,
 }
 impl<N> JournalRegion<N>
 where
     N: NonVolatileMemory,
 {
+    #[allow(dead_code)]
+    pub fn data(&self) -> &DelayedReleaseInfo {
+        &self.data_for_delayed_release
+    }
+
+    #[allow(dead_code)]
+    pub fn unreleased_data_portions(&self) -> Vec<DataPortion> {
+        self.data_for_delayed_release.releasable_data_portions()
+    }
+
+    pub fn take_all_unreleased_data_portions(&mut self) -> Vec<DataPortion> {
+        self.data_for_delayed_release
+            .take_releasable_data_portions()
+    }
+
     pub fn journal_entries(&mut self) -> Result<(u64, u64, u64, Vec<JournalEntry>)> {
         self.ring_buffer.journal_entries()
     }
@@ -92,6 +109,7 @@ where
             sync_countdown: options.sync_interval,
             options,
             gc_after_append: true,
+            data_for_delayed_release: DelayedReleaseInfo::new(),
         };
         track!(journal.restore(index))?;
         Ok(journal)
@@ -105,8 +123,7 @@ where
         portion: DataPortion,
     ) -> Result<()> {
         let record = JournalRecord::Put(*lump_id, portion);
-        track!(self.append_record_with_gc::<[_; 0]>(index, &record))?;
-        Ok(())
+        track!(self.append_record_with_gc::<[_; 0]>(index, &record))
     }
 
     /// 埋め込みPUT操作をジャーナルに記録する.
@@ -117,14 +134,23 @@ where
         data: &[u8],
     ) -> Result<()> {
         let record = JournalRecord::Embed(*lump_id, data);
-        track!(self.append_record_with_gc(index, &record))?;
-        Ok(())
+        track!(self.append_record_with_gc(index, &record))
     }
 
     /// DELETE操作をジャーナルに記録する.
-    pub fn records_delete(&mut self, index: &mut LumpIndex, lump_id: &LumpId) -> Result<()> {
+    ///
+    /// `deleted_portion`は、このDELETE操作はデータ領域のどのポーションを対象にしているかを表す。
+    /// ジャーナルに埋め込みPUTされたlumpを削除した場合にはNoneをとる。
+    pub fn records_delete(
+        &mut self,
+        index: &mut LumpIndex,
+        lump_id: &LumpId,
+        deleted_portion: Option<DataPortion>,
+    ) -> Result<()> {
         let record = JournalRecord::Delete(*lump_id);
         track!(self.append_record_with_gc::<[_; 0]>(index, &record))?;
+        self.data_for_delayed_release
+            .insert_data_portions(deleted_portion.into_iter().collect());
         Ok(())
     }
 
@@ -133,9 +159,12 @@ where
         &mut self,
         index: &mut LumpIndex,
         range: Range<LumpId>,
+        deleted_portions: Vec<DataPortion>,
     ) -> Result<()> {
         let record = JournalRecord::DeleteRange(range);
         track!(self.append_record_with_gc::<[_; 0]>(index, &record))?;
+        self.data_for_delayed_release
+            .insert_data_portions(deleted_portions);
         Ok(())
     }
 
@@ -172,7 +201,7 @@ where
         if self.gc_queue.is_empty() && self.ring_buffer.capacity() < self.ring_buffer.usage() * 2 {
             // 空き領域が半分を切った場合には、`run_side_job_once()`以外でもGCを開始する
             // ("半分"という閾値に深い意味はない)
-            track!(self.fill_gc_queue())?;
+            track!(self.fill_gc_queue())?
         }
         while let Some(entry) = self.gc_queue.pop_front() {
             self.metrics.gc_dequeued_records.increment();
@@ -182,7 +211,6 @@ where
                 break;
             }
         }
-
         Ok(())
     }
 
@@ -190,7 +218,7 @@ where
         (x <= y && y <= z) || (z <= x && x <= y) || (y <= z && z <= x)
     }
 
-    fn gc_all_entries_in_queue(&mut self, index: &mut LumpIndex) -> Result<()> {
+    pub fn gc_all_entries_in_queue(&mut self, index: &mut LumpIndex) -> Result<()> {
         while !self.gc_queue.is_empty() {
             track!(self.gc_once(index))?;
         }
@@ -235,6 +263,14 @@ where
         self.gc_after_append = enable;
     }
 
+    /*
+     * gc_onceが呼ばれている以上、この辺でも解放処理をする必要がある。
+     * DataPortionAllocatorをDataRegionから引き抜いて
+     * journalに持たせた方が良い？？
+     *
+     * 解放はそれで良いかもしれないが、
+     * そうするとallocateする時にどうするのという話になる。
+     */
     fn append_record_with_gc<B>(
         &mut self,
         index: &mut LumpIndex,
@@ -300,10 +336,13 @@ where
         }
     }
 
-    /// GC用のキューの内容を補填する.
+    /// GC用のキューに、`num_of_entries`個のjournal record entryを追加する。
     ///
     /// 必要に応じて、ジャーナルヘッダの更新も行う.
-    fn fill_gc_queue(&mut self) -> Result<()> {
+    ///
+    /// 返り値 Ok(num_of_delete_records) により、
+    /// 発見した永続化されたDeleteレコードまたはDeleteRangeレコードの総数を返す。
+    fn fill_gc_queue_by(&mut self, num_of_entries: usize) -> Result<()> {
         assert!(self.gc_queue.is_empty());
 
         // GCキューが空 `gc_queue.is_empty() == true`
@@ -317,10 +356,22 @@ where
             return Ok(());
         }
 
-        for result in track!(self.ring_buffer.dequeue_iter())?.take(self.options.gc_queue_size) {
+        let mut num_of_delete_records = 0;
+        for result in track!(self.ring_buffer.dequeue_iter())?.take(num_of_entries) {
             let entry = track!(result)?;
+
+            match entry.record {
+                JournalRecord::Delete(_) | JournalRecord::DeleteRange(_) => {
+                    num_of_delete_records += 1
+                }
+                _ => {}
+            }
+
             self.gc_queue.push_back(entry);
         }
+
+        self.data_for_delayed_release
+            .detect_new_synced_delete_records(num_of_delete_records);
 
         self.metrics
             .gc_enqueued_records
@@ -328,8 +379,26 @@ where
         Ok(())
     }
 
+    /// GC用のキューに、`options.gc_queue_size`個のjournal record entryを追加する。
+    ///
+    /// 必要に応じて、ジャーナルヘッダの更新も行う.
+    ///
+    /// 返り値 Ok(num_of_delete_records) により、
+    /// 発見した永続化されたDeleteレコードまたはDeleteRangeレコードの総数を返す。
+    fn fill_gc_queue(&mut self) -> Result<()> {
+        let gc_queue_size = self.options.gc_queue_size;
+        self.fill_gc_queue_by(gc_queue_size)
+    }
+
     /// リングバッファおよびインデックスを前回の状態に復元する.
+    ///
+    /// 返り値 Ok(num_of_delete_records) は、永続化済みのジャーナル領域に幾つの
+    /// DeleteレコードまたはDeleteRangeレコードが存在したかを表す。
+    ///
+    /// これらのレコードについては永続化されていることが分かっているため、
+    /// この段階で解放を行い、GC時には解放処理をskipする。
     fn restore(&mut self, index: &mut LumpIndex) -> Result<()> {
+        let mut num_of_initial_delete_records = 0;
         for result in track!(self.ring_buffer.restore_entries())? {
             let JournalEntry { start, record } = track!(result)?;
             match record {
@@ -344,9 +413,11 @@ where
                     index.insert(lump_id, Portion::Journal(portion));
                 }
                 JournalRecord::Delete(lump_id) => {
+                    num_of_initial_delete_records += 1;
                     index.remove(&lump_id);
                 }
                 JournalRecord::DeleteRange(range) => {
+                    num_of_initial_delete_records += 1;
                     for lump_id in index.list_range(range) {
                         index.remove(&lump_id);
                     }
@@ -354,6 +425,179 @@ where
                 JournalRecord::EndOfRecords | JournalRecord::GoToFront => unreachable!(),
             }
         }
+        self.data_for_delayed_release
+            .set_initial_delete_records(num_of_initial_delete_records);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use block::BlockSize;
+    use lump::LumpId;
+    use nvm::FileNvm;
+    use prometrics::metrics::MetricBuilder;
+    use std::io::{Seek, SeekFrom};
+    use std::ops::Range;
+    use std::path::Path;
+    use storage::header::FULL_HEADER_SIZE;
+    use storage::index::LumpIndex;
+    use storage::journal::JournalRegionOptions;
+    use storage::portion::DataPortion;
+    use storage::{Address, StorageHeader, MAJOR_VERSION, MINOR_VERSION};
+    use tempdir::TempDir;
+    use trackable::result::TestResult;
+
+    #[test]
+    fn counting_delete_records_in_open_works() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+
+        {
+            let mut lump_index = LumpIndex::new();
+            let mut region = track!(create_journal_region_in_file(
+                dir.path().join("test.lusf"),
+                BlockSize::min().ceil_align(1024 * 1024),
+                &mut lump_index
+            ))?;
+            track!(region.append_record(&mut lump_index, &make_put_record(42, 1, 2)))?;
+            track!(region.append_record(&mut lump_index, &make_put_record(43, 100, 10)))?;
+            track!(region.append_record(&mut lump_index, &make_delete_record(42)))?;
+            track!(region.append_record(&mut lump_index, &make_delete_range_record(0..100)))?;
+            track!(region.sync())?;
+        }
+
+        {
+            let mut lump_index = LumpIndex::new();
+            let region = track!(open_journal_region_from_file(
+                dir.path().join("test.lusf"),
+                &mut lump_index
+            ))?;
+            assert_eq!(region.data().num_of_releasable_delete_records(), 0);
+            assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 2);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn counting_delete_records_when_filling_gc_queue_works() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+        let mut lump_index = LumpIndex::new();
+        let mut region = track!(create_journal_region_in_file(
+            dir.path().join("test.lusf"),
+            BlockSize::min().ceil_align(1024 * 1024),
+            &mut lump_index
+        ))?;
+        track!(region.append_record(&mut lump_index, &make_put_record(42, 1, 2)))?;
+        track!(region.append_record(&mut lump_index, &make_put_record(43, 100, 10)))?;
+        track!(region.append_record(&mut lump_index, &make_delete_record(42)))?;
+        track!(region.append_record(&mut lump_index, &make_delete_range_record(0..100)))?;
+        track!(region.append_record(&mut lump_index, &make_put_record(44, 500, 10)))?;
+        track!(region.append_record(&mut lump_index, &make_delete_record(44)))?;
+        track!(region.sync())?;
+
+        // put(42)をエンキュー
+        track!(region.fill_gc_queue_by(1))?;
+        assert_eq!(region.data().num_of_releasable_delete_records(), 0);
+        assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 0);
+
+        // fill_gc_queue_byの前提条件（gc queueが空）を満たすためにフルGCを行いGCキューを空にする
+        track!(region.gc_all_entries(&mut lump_index))?;
+        // put(43), delete(42)をエンキュー
+        track!(region.fill_gc_queue_by(2))?;
+        assert_eq!(region.data().num_of_releasable_delete_records(), 1);
+        assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 0);
+
+        track!(region.gc_all_entries(&mut lump_index))?;
+        // delete_range(0..100), put(44), delete(44)をエンキュー
+        track!(region.fill_gc_queue_by(3))?;
+        assert_eq!(region.data().num_of_releasable_delete_records(), 3);
+        assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 0);
+
+        Ok(())
+    }
+
+    // Helper functions
+    fn open_journal_region_from_file<P: AsRef<Path>>(
+        filepath: P,
+        lump_index: &mut LumpIndex,
+    ) -> Result<JournalRegion<FileNvm>> {
+        let mut nvm: FileNvm = track!(FileNvm::open(filepath))?;
+        track_io!(nvm.seek(SeekFrom::Start(0)))?;
+        let buf = track!(nvm.aligned_read_bytes(FULL_HEADER_SIZE as usize))?;
+        let header = track!(StorageHeader::read_from(&buf[..]))?;
+        let (journal_nvm, _) = track!(header.split_regions(nvm))?;
+
+        let metric_builder = MetricBuilder::default();
+        JournalRegion::<FileNvm>::open(
+            journal_nvm,
+            lump_index,
+            &metric_builder,
+            JournalRegionOptions::default(),
+        )
+    }
+
+    fn create_journal_region_in_file<P: AsRef<Path>>(
+        filepath: P,
+        capacity: u64,
+        lump_index: &mut LumpIndex,
+    ) -> Result<JournalRegion<FileNvm>> {
+        let mut nvm: FileNvm = track!(FileNvm::create(filepath, capacity))?;
+
+        track_io!(nvm.seek(SeekFrom::Start(0)))?;
+        track!(nvm.aligned_write_all(|mut temp_buf| {
+            track!(storage_header().write_header_region_to(&mut temp_buf))?;
+            track!(JournalRegion::<FileNvm>::initialize(
+                temp_buf,
+                BlockSize::min()
+            ))?;
+            Ok(())
+        }))?;
+        track!(nvm.sync())?;
+
+        track_io!(nvm.seek(SeekFrom::Start(0)))?;
+        let buf = track!(nvm.aligned_read_bytes(FULL_HEADER_SIZE as usize))?;
+        let header = track!(StorageHeader::read_from(&buf[..]))?;
+        let (journal_nvm, _) = track!(header.split_regions(nvm))?;
+
+        let metric_builder = MetricBuilder::default();
+        let region = track_try_unwrap!(JournalRegion::<FileNvm>::open(
+            journal_nvm,
+            lump_index,
+            &metric_builder,
+            JournalRegionOptions::default()
+        ));
+
+        assert!(region.unreleased_data_portions().len() == 0);
+        Ok(region)
+    }
+    fn make_put_record(lump_id: u128, start: u32, len: u16) -> JournalRecord<Vec<u8>> {
+        JournalRecord::<Vec<u8>>::Put(
+            LumpId::new(lump_id),
+            DataPortion {
+                start: Address::from(start),
+                len,
+            },
+        )
+    }
+    fn make_delete_record(lump_id: u128) -> JournalRecord<Vec<u8>> {
+        JournalRecord::Delete(LumpId::new(lump_id))
+    }
+    fn make_delete_range_record(range: Range<u128>) -> JournalRecord<Vec<u8>> {
+        JournalRecord::DeleteRange(Range {
+            start: LumpId::new(range.start),
+            end: LumpId::new(range.end),
+        })
+    }
+    fn storage_header() -> StorageHeader {
+        StorageHeader {
+            major_version: MAJOR_VERSION,
+            minor_version: MINOR_VERSION,
+            block_size: BlockSize::min(),
+            instance_uuid: uuid::Uuid::new_v4(),
+            journal_region_size: 102400,
+            data_region_size: 409600,
+        }
     }
 }

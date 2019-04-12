@@ -79,6 +79,22 @@ impl From<PortionU64> for Portion {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DataPortionU64(u64);
+impl From<DataPortion> for DataPortionU64 {
+    fn from(f: DataPortion) -> Self {
+        let (offset, len) = (f.start.as_u64(), u64::from(f.len));
+        DataPortionU64(offset | (len << 40))
+    }
+}
+impl From<DataPortionU64> for DataPortion {
+    fn from(f: DataPortionU64) -> Self {
+        let len = (f.0 >> 40) as u16;
+        let start = Address::from_u64(f.0 & Address::MAX).unwrap();
+        DataPortion { start, len }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::mem;
