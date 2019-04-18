@@ -649,7 +649,10 @@ mod tests {
 
         let nvm = track!(FileNvm::create(
             dir.path().join("test.lusf"),
-            BlockSize::min().ceil_align(1024 * 1024)
+            // 512*1024の書き込みを2回成功させ、3回目にDiskFullにするための容量設定。
+            // ジャーナル領域分を除いて512*1024*2のデータ領域が欲しいので
+            // 少し多めにとる。
+            BlockSize::min().ceil_align(1100 * 1024)
         ))?;
         let mut storage = track!(Storage::create(nvm))?;
 
@@ -657,10 +660,12 @@ mod tests {
             track!(storage.put(&id("000"), &zeroed_data(512 * 1024)))?,
             true
         );
+
         assert_eq!(
-            storage.put(&id("000"), &zeroed_data(512 * 1024)).ok(),
-            Some(false)
+            track!(storage.put(&id("000"), &zeroed_data(512 * 1024)))?,
+            false
         );
+
         assert_eq!(
             storage
                 .put(&id("111"), &zeroed_data(512 * 1024))
@@ -669,7 +674,22 @@ mod tests {
             Some(ErrorKind::StorageFull)
         );
 
-        assert_eq!(storage.delete(&id("000")).ok(), Some(true));
+        assert_eq!(track!(storage.delete(&id("000")))?, true);
+
+        // deleteだけでは lumpid="000" の居た領域は再利用可能ではない。
+        assert_eq!(
+            storage
+                .put(&id("111"), &zeroed_data(512 * 1024))
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::StorageFull)
+        );
+
+        // journal_gcなどで永続化を確認し、解放可能にする。
+        track!(storage.journal_gc())?;
+        // アロケータに通知し、再利用可能領域の解放処理を行う。
+        storage.notify_all_unreleased_entries();
+
         assert_eq!(
             storage.put(&id("111"), &zeroed_data(512 * 1024)).ok(),
             Some(true)
@@ -1018,9 +1038,9 @@ mod tests {
             // (B)
             // (B)は(C)に入る前準備なので特記するべき状態ではない。
             let snapshot = storage.journal_snapshot().unwrap();
-            assert_eq!(snapshot.unreleased_head, 3198);
-            assert_eq!(snapshot.head, 3198);
-            assert_eq!(snapshot.tail, 3198);
+            assert_eq!(snapshot.unreleased_head, 3219);
+            assert_eq!(snapshot.head, 3219);
+            assert_eq!(snapshot.tail, 3219);
         }
         /*
          * ジャーナル領域のhead positionはunreleased_headの値と常に等しいため
@@ -1041,8 +1061,8 @@ mod tests {
             // (C)
             // 位置33の周辺を値`42`で上書きした状態。
             let snapshot = storage.journal_snapshot().unwrap();
-            assert_eq!(snapshot.unreleased_head, 3198);
-            assert_eq!(snapshot.head, 3198);
+            assert_eq!(snapshot.unreleased_head, 3219);
+            assert_eq!(snapshot.head, 3219);
             assert_eq!(snapshot.tail, 2023);
         }
 
@@ -1052,8 +1072,8 @@ mod tests {
         let mut storage = track!(Storage::open(nvm))?;
         {
             let snapshot = storage.journal_snapshot().unwrap();
-            assert_eq!(snapshot.unreleased_head, 3198);
-            assert_eq!(snapshot.head, 3198);
+            assert_eq!(snapshot.unreleased_head, 3219);
+            assert_eq!(snapshot.head, 3219);
             assert_eq!(snapshot.tail, 2023);
         }
 
