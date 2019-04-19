@@ -24,11 +24,6 @@ impl<N> DataRegion<N>
 where
     N: NonVolatileMemory,
 {
-    #[allow(dead_code)]
-    pub(crate) fn allocator(&self) -> &DataPortionAllocator {
-        &self.allocator
-    }
-
     /// 新しい`DataRegion`インスタンスを生成する.
     pub fn new(metric_builder: &MetricBuilder, allocator: DataPortionAllocator, nvm: N) -> Self {
         let capacity = allocator.metrics().capacity_bytes;
@@ -107,6 +102,11 @@ where
     /// `size`分のデータをカバーするのに必要なブロック数.
     fn block_count(&self, size: u32) -> u32 {
         (size + u32::from(self.block_size.as_u16()) - 1) / u32::from(self.block_size.as_u16())
+    }
+
+    // The following methods are for unit tests.
+    pub(crate) fn allocator(&self) -> &DataPortionAllocator {
+        &self.allocator
     }
 }
 

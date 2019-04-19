@@ -79,6 +79,7 @@ impl From<PortionU64> for Portion {
     }
 }
 
+/// `Portion`に対する`PortionU64`同様に、`DataPortion`の内部表現のサイズを64bitにした構造体.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DataPortionU64(u64);
 impl From<DataPortion> for DataPortionU64 {

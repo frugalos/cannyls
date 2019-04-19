@@ -5,7 +5,7 @@ pub use self::options::JournalRegionOptions;
 pub use self::record::{JournalEntry, JournalRecord};
 pub use self::region::JournalRegion;
 
-pub mod delayed_release_info;
+mod delayed_release_info;
 mod header;
 mod nvm_buffer;
 mod options;

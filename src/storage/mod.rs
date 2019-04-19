@@ -88,20 +88,6 @@ impl<N> Storage<N>
 where
     N: NonVolatileMemory,
 {
-    // Method for tests
-    #[allow(dead_code)]
-    fn allocated_data_portions(&self) -> Vec<DataPortion> {
-        self.lump_index.data_portions().collect()
-    }
-    #[allow(dead_code)]
-    fn is_reusable_data_portion(&self, portion: &DataPortion) -> bool {
-        !self.data_region.allocator().is_allocated_portion(portion)
-    }
-    #[allow(dead_code)]
-    fn journal_region(&self) -> &JournalRegion<N> {
-        &self.journal_region
-    }
-
     pub(crate) fn new(
         header: StorageHeader,
         journal_region: JournalRegion<N>,
@@ -315,8 +301,8 @@ where
     }
 
     /// 永続化済みかつ未開放のDelete及びDeleteRangeエントリに紐づくPortionを全て解放する。
-    pub(crate) fn notify_all_unreleased_entries(&mut self) {
-        for data_portion in self.journal_region.take_all_unreleased_data_portions() {
+    pub(crate) fn release_all_releasable_portions(&mut self) {
+        for data_portion in self.journal_region.take_all_releasable_data_portions() {
             self.data_region.delete(data_portion);
         }
     }
@@ -327,7 +313,7 @@ where
     /// リソースが空いているタイミングで実行することによって、
     /// 全体的な性能を改善できる可能性がある.
     pub fn run_side_job_once(&mut self) -> Result<()> {
-        self.notify_all_unreleased_entries();
+        self.release_all_releasable_portions();
         track!(self.journal_region.run_side_job_once(&mut self.lump_index))?;
         Ok(())
     }
@@ -393,6 +379,12 @@ where
         Ok(())
     }
 
+    /// `lump_id`をLump Indexから除外する。
+    ///
+    /// * 削除対象の`lump_id`がLump Indexに存在する場合;
+    ///     * ジャーナル領域にDELETEレコードを書き込み、Ok(true)を返す。
+    /// * 削除対象の`lump_id`がLump Indexに存在しない場合:
+    ///     * Ok(false)を返す。
     fn delete_if_exists(&mut self, lump_id: &LumpId) -> Result<bool> {
         if let Some(portion) = self.lump_index.remove(lump_id) {
             self.metrics.delete_lumps.increment();
@@ -413,6 +405,24 @@ where
         } else {
             Ok(false)
         }
+    }
+
+    // The following methods are for unit tests.
+    // オンメモリのIndexからみて割り当て済みのデータポーション一覧を返す。
+    #[allow(dead_code)]
+    fn allocated_data_portions_on_lump_index(&self) -> Vec<DataPortion> {
+        self.lump_index.data_portions().collect()
+    }
+
+    // データポーション`portion`がアロケータレベルでfreeかどうかを調べる。
+    #[allow(dead_code)]
+    fn is_reusable_data_portion(&self, portion: &DataPortion) -> bool {
+        !self.data_region.allocator().is_allocated_portion(portion)
+    }
+
+    #[allow(dead_code)]
+    fn journal_region(&self) -> &JournalRegion<N> {
+        &self.journal_region
     }
 }
 
@@ -450,7 +460,7 @@ mod tests {
             assert!(track!(storage.delete(&id("000")))?);
 
             track!(storage.journal_gc())?;
-            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 1);
+            assert_eq!(storage.journal_region().releasable_data_portions().len(), 1);
         }
         {
             // 埋め込みPUTの場合は解放要求がないことを確認する。
@@ -464,7 +474,7 @@ mod tests {
             assert!(track!(storage.delete(&id("000")))?);
 
             track!(storage.journal_gc())?;
-            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 0);
+            assert_eq!(storage.journal_region().releasable_data_portions().len(), 0);
 
             for i in 10..100 {
                 assert!(track!(storage.put(&LumpId::new(i), &data(&i.to_string())))?);
@@ -478,12 +488,16 @@ mod tests {
             );
 
             track!(storage.journal_gc())?;
-            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 0);
+            assert_eq!(storage.journal_region().releasable_data_portions().len(), 0);
         }
 
         Ok(())
     }
 
+    /*
+     * 既にlump_idが存在する場合に、そのlump_idに対する上書きPUTを行った場合には
+     * ジャーナル領域に対応するDELETEレコードが書き込まれることを確認する。
+     */
     #[test]
     fn overwriting_put_enqueues_delete_record() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
@@ -525,10 +539,16 @@ mod tests {
         Ok(())
     }
 
+    /*
+     * 遅延解放の挙動を確認する。
+     * 具体的には以下3つを確認する:
+     * 1. Storage#deleteしただけでは解放されないこと。
+     * 2. Storage#journal_gcで永続化が確認できた場合は解放可能な状態になること（ただし未開放）。
+     * 3. 明示的に解放処理を行うことで再利用可能になること。
+     */
     #[test]
     fn confirm_delayed_releasing_behavior() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
-
         {
             // create
             let nvm = track!(FileNvm::create(
@@ -544,7 +564,7 @@ mod tests {
 
             assert!(storage
                 .journal_region()
-                .unreleased_data_portions()
+                .releasable_data_portions()
                 .is_empty());
         }
         {
@@ -556,16 +576,16 @@ mod tests {
 
             assert!(storage
                 .journal_region()
-                .unreleased_data_portions()
+                .releasable_data_portions()
                 .is_empty());
 
             assert!(track!(storage.put(&id("002"), &zeroed_data(1)))?);
             assert!(track!(storage.put(&id("003"), &zeroed_data(1)))?);
             assert!(storage
                 .journal_region()
-                .unreleased_data_portions()
+                .releasable_data_portions()
                 .is_empty());
-            let data_portions = storage.allocated_data_portions();
+            let data_portions = storage.allocated_data_portions_on_lump_index();
             assert!(data_portions
                 .iter()
                 .all(|e| !storage.is_reusable_data_portion(e)));
@@ -574,26 +594,31 @@ mod tests {
             assert!(track!(storage.delete(&id("003")))?);
             assert!(storage
                 .journal_region()
-                .unreleased_data_portions()
+                .releasable_data_portions()
                 .is_empty());
 
             // deleteしただけでは、永続化したかどうか分からないため、アロケータが解放できない。
-            storage.notify_all_unreleased_entries();
+            storage.release_all_releasable_portions();
             assert!(storage
                 .journal_region()
-                .unreleased_data_portions()
+                .releasable_data_portions()
                 .is_empty());
             assert!(data_portions
                 .iter()
                 .all(|e| !storage.is_reusable_data_portion(e)));
 
-            // GCの過程でdeleteレコードを読み込めた場合は解放できる。
+            // GCの過程でdeleteレコードを読み込めた場合は解放可能な状態となるが、解放はされていない。
             track!(storage.journal_gc())?;
-            assert_eq!(storage.journal_region().unreleased_data_portions().len(), 2);
-            storage.notify_all_unreleased_entries();
+            assert_eq!(storage.journal_region().releasable_data_portions().len(), 2);
+            assert!(data_portions
+                .iter()
+                .all(|e| !storage.is_reusable_data_portion(e)));
+
+            // 解放処理を行うことで初めて再利用可能になる。
+            storage.release_all_releasable_portions();
             assert!(storage
                 .journal_region()
-                .unreleased_data_portions()
+                .releasable_data_portions()
                 .is_empty());
             assert!(data_portions
                 .iter()
@@ -688,7 +713,7 @@ mod tests {
         // journal_gcなどで永続化を確認し、解放可能にする。
         track!(storage.journal_gc())?;
         // アロケータに通知し、再利用可能領域の解放処理を行う。
-        storage.notify_all_unreleased_entries();
+        storage.release_all_releasable_portions();
 
         assert_eq!(
             storage.put(&id("111"), &zeroed_data(512 * 1024)).ok(),

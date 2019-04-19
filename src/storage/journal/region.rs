@@ -40,25 +40,14 @@ pub struct JournalRegion<N: NonVolatileMemory> {
     sync_countdown: usize, // `0`になったら`sync()`を呼び出す
     options: JournalRegionOptions,
     gc_after_append: bool,
-    data_for_delayed_release: DelayedReleaseInfo,
+    delayed_release_info: DelayedReleaseInfo,
 }
 impl<N> JournalRegion<N>
 where
     N: NonVolatileMemory,
 {
-    #[allow(dead_code)]
-    pub fn data(&self) -> &DelayedReleaseInfo {
-        &self.data_for_delayed_release
-    }
-
-    #[allow(dead_code)]
-    pub fn unreleased_data_portions(&self) -> Vec<DataPortion> {
-        self.data_for_delayed_release.releasable_data_portions()
-    }
-
-    pub fn take_all_unreleased_data_portions(&mut self) -> Vec<DataPortion> {
-        self.data_for_delayed_release
-            .take_releasable_data_portions()
+    pub fn take_all_releasable_data_portions(&mut self) -> Vec<DataPortion> {
+        self.delayed_release_info.take_releasable_data_portions()
     }
 
     pub fn journal_entries(&mut self) -> Result<(u64, u64, u64, Vec<JournalEntry>)> {
@@ -109,7 +98,7 @@ where
             sync_countdown: options.sync_interval,
             options,
             gc_after_append: true,
-            data_for_delayed_release: DelayedReleaseInfo::new(),
+            delayed_release_info: DelayedReleaseInfo::new(),
         };
         track!(journal.restore(index))?;
         Ok(journal)
@@ -123,7 +112,8 @@ where
         portion: DataPortion,
     ) -> Result<()> {
         let record = JournalRecord::Put(*lump_id, portion);
-        track!(self.append_record_with_gc::<[_; 0]>(index, &record))
+        track!(self.append_record_with_gc::<[_; 0]>(index, &record))?;
+        Ok(())
     }
 
     /// 埋め込みPUT操作をジャーナルに記録する.
@@ -134,13 +124,14 @@ where
         data: &[u8],
     ) -> Result<()> {
         let record = JournalRecord::Embed(*lump_id, data);
-        track!(self.append_record_with_gc(index, &record))
+        track!(self.append_record_with_gc(index, &record))?;
+        Ok(())
     }
 
     /// DELETE操作をジャーナルに記録する.
     ///
-    /// `deleted_portion`は、このDELETE操作はデータ領域のどのポーションを対象にしているかを表す。
-    /// ジャーナルに埋め込みPUTされたlumpを削除した場合にはNoneをとる。
+    /// `deleted_portion`で、このDELETE操作がlump indexから取り除いたデータポーションを表す。
+    /// ジャーナル埋め込みPUTのlumpを削除した場合はデータポーションを解除していないのでNoneとしなくてはならない。
     pub fn records_delete(
         &mut self,
         index: &mut LumpIndex,
@@ -149,12 +140,14 @@ where
     ) -> Result<()> {
         let record = JournalRecord::Delete(*lump_id);
         track!(self.append_record_with_gc::<[_; 0]>(index, &record))?;
-        self.data_for_delayed_release
+        self.delayed_release_info
             .insert_data_portions(deleted_portion.into_iter().collect());
         Ok(())
     }
 
-    // RANGE-DELETE操作をジャーナルに記録する。
+    /// RANGE-DELETE操作をジャーナルに記録する。
+    ///
+    /// `deleted_portions`で、このDELETE_RANGE操作がlump indexから取り除いたデータポーション群を表す。
     pub fn records_delete_range(
         &mut self,
         index: &mut LumpIndex,
@@ -163,7 +156,7 @@ where
     ) -> Result<()> {
         let record = JournalRecord::DeleteRange(range);
         track!(self.append_record_with_gc::<[_; 0]>(index, &record))?;
-        self.data_for_delayed_release
+        self.delayed_release_info
             .insert_data_portions(deleted_portions);
         Ok(())
     }
@@ -218,7 +211,7 @@ where
         (x <= y && y <= z) || (z <= x && x <= y) || (y <= z && z <= x)
     }
 
-    pub fn gc_all_entries_in_queue(&mut self, index: &mut LumpIndex) -> Result<()> {
+    fn gc_all_entries_in_queue(&mut self, index: &mut LumpIndex) -> Result<()> {
         while !self.gc_queue.is_empty() {
             track!(self.gc_once(index))?;
         }
@@ -263,14 +256,6 @@ where
         self.gc_after_append = enable;
     }
 
-    /*
-     * gc_onceが呼ばれている以上、この辺でも解放処理をする必要がある。
-     * DataPortionAllocatorをDataRegionから引き抜いて
-     * journalに持たせた方が良い？？
-     *
-     * 解放はそれで良いかもしれないが、
-     * そうするとallocateする時にどうするのという話になる。
-     */
     fn append_record_with_gc<B>(
         &mut self,
         index: &mut LumpIndex,
@@ -339,9 +324,6 @@ where
     /// GC用のキューに、`num_of_entries`個のjournal record entryを追加する。
     ///
     /// 必要に応じて、ジャーナルヘッダの更新も行う.
-    ///
-    /// 返り値 Ok(num_of_delete_records) により、
-    /// 発見した永続化されたDeleteレコードまたはDeleteRangeレコードの総数を返す。
     fn fill_gc_queue_by(&mut self, num_of_entries: usize) -> Result<()> {
         assert!(self.gc_queue.is_empty());
 
@@ -370,7 +352,7 @@ where
             self.gc_queue.push_back(entry);
         }
 
-        self.data_for_delayed_release
+        self.delayed_release_info
             .detect_new_synced_delete_records(num_of_delete_records);
 
         self.metrics
@@ -382,21 +364,12 @@ where
     /// GC用のキューに、`options.gc_queue_size`個のjournal record entryを追加する。
     ///
     /// 必要に応じて、ジャーナルヘッダの更新も行う.
-    ///
-    /// 返り値 Ok(num_of_delete_records) により、
-    /// 発見した永続化されたDeleteレコードまたはDeleteRangeレコードの総数を返す。
     fn fill_gc_queue(&mut self) -> Result<()> {
         let gc_queue_size = self.options.gc_queue_size;
         self.fill_gc_queue_by(gc_queue_size)
     }
 
     /// リングバッファおよびインデックスを前回の状態に復元する.
-    ///
-    /// 返り値 Ok(num_of_delete_records) は、永続化済みのジャーナル領域に幾つの
-    /// DeleteレコードまたはDeleteRangeレコードが存在したかを表す。
-    ///
-    /// これらのレコードについては永続化されていることが分かっているため、
-    /// この段階で解放を行い、GC時には解放処理をskipする。
     fn restore(&mut self, index: &mut LumpIndex) -> Result<()> {
         let mut num_of_initial_delete_records = 0;
         for result in track!(self.ring_buffer.restore_entries())? {
@@ -425,9 +398,20 @@ where
                 JournalRecord::EndOfRecords | JournalRecord::GoToFront => unreachable!(),
             }
         }
-        self.data_for_delayed_release
+        self.delayed_release_info
             .set_initial_delete_records(num_of_initial_delete_records);
         Ok(())
+    }
+
+    // 以下はユニットテスト用のメソッド群
+    #[allow(dead_code)]
+    fn delayed_release_info(&self) -> &DelayedReleaseInfo {
+        &self.delayed_release_info
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn releasable_data_portions(&self) -> Vec<DataPortion> {
+        self.delayed_release_info.releasable_data_portions()
     }
 }
 
@@ -449,11 +433,15 @@ mod tests {
     use tempdir::TempDir;
     use trackable::result::TestResult;
 
+    /*
+     * ジャーナル領域をopenした時に、Delete及びDeleteRangeレコードを
+     * DelayedReleaseInfo構造体レベルで正しく数えられているかどうかを確認する。
+     */
     #[test]
     fn counting_delete_records_in_open_works() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
-
         {
+            // ジャーナル領域を新しく作成し、レコードを書き込んだ後に閉じる。
             let mut lump_index = LumpIndex::new();
             let mut region = track!(create_journal_region_in_file(
                 dir.path().join("test.lusf"),
@@ -466,20 +454,34 @@ mod tests {
             track!(region.append_record(&mut lump_index, &make_delete_range_record(0..100)))?;
             track!(region.sync())?;
         }
-
         {
+            // 空でないジャーナル領域を開き、正しく削除レコード数を数えられていることを確認する。
             let mut lump_index = LumpIndex::new();
             let region = track!(open_journal_region_from_file(
                 dir.path().join("test.lusf"),
                 &mut lump_index
             ))?;
-            assert_eq!(region.data().num_of_releasable_delete_records(), 0);
-            assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 2);
+            assert_eq!(
+                region
+                    .delayed_release_info()
+                    .num_of_releasable_delete_records(),
+                0
+            );
+            assert_eq!(
+                region
+                    .delayed_release_info()
+                    .num_of_unqueued_initial_delete_records(),
+                2
+            );
         }
 
         Ok(())
     }
 
+    /*
+     * fill_gc_queueの過程で新たに削除レコードを見つけた際に
+     * それをDelayedReleaseInfo構造体レベルで適切に数えられていることを確認する。
+     */
     #[test]
     fn counting_delete_records_when_filling_gc_queue_works() -> TestResult {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
@@ -499,26 +501,56 @@ mod tests {
 
         // put(42)をエンキュー
         track!(region.fill_gc_queue_by(1))?;
-        assert_eq!(region.data().num_of_releasable_delete_records(), 0);
-        assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 0);
+        assert_eq!(
+            region
+                .delayed_release_info()
+                .num_of_releasable_delete_records(),
+            0
+        );
+        assert_eq!(
+            region
+                .delayed_release_info()
+                .num_of_unqueued_initial_delete_records(),
+            0
+        );
 
         // fill_gc_queue_byの前提条件（gc queueが空）を満たすためにフルGCを行いGCキューを空にする
         track!(region.gc_all_entries(&mut lump_index))?;
         // put(43), delete(42)をエンキュー
         track!(region.fill_gc_queue_by(2))?;
-        assert_eq!(region.data().num_of_releasable_delete_records(), 1);
-        assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 0);
+        assert_eq!(
+            region
+                .delayed_release_info()
+                .num_of_releasable_delete_records(),
+            1
+        );
+        assert_eq!(
+            region
+                .delayed_release_info()
+                .num_of_unqueued_initial_delete_records(),
+            0
+        );
 
         track!(region.gc_all_entries(&mut lump_index))?;
         // delete_range(0..100), put(44), delete(44)をエンキュー
         track!(region.fill_gc_queue_by(3))?;
-        assert_eq!(region.data().num_of_releasable_delete_records(), 3);
-        assert_eq!(region.data().num_of_unqueued_initial_delete_records(), 0);
+        assert_eq!(
+            region
+                .delayed_release_info()
+                .num_of_releasable_delete_records(),
+            3
+        );
+        assert_eq!(
+            region
+                .delayed_release_info()
+                .num_of_unqueued_initial_delete_records(),
+            0
+        );
 
         Ok(())
     }
 
-    // Helper functions
+    // The following functions are helper functions.
     fn open_journal_region_from_file<P: AsRef<Path>>(
         filepath: P,
         lump_index: &mut LumpIndex,
@@ -569,7 +601,7 @@ mod tests {
             JournalRegionOptions::default()
         ));
 
-        assert!(region.unreleased_data_portions().len() == 0);
+        assert!(region.releasable_data_portions().len() == 0);
         Ok(region)
     }
     fn make_put_record(lump_id: u128, start: u32, len: u16) -> JournalRecord<Vec<u8>> {
