@@ -167,6 +167,10 @@ where
         &self.metrics
     }
 
+    pub fn is_dirty(&self) -> bool {
+        self.ring_buffer.is_dirty()
+    }
+
     /// GC処理を一単位実行する.
     fn gc_once(&mut self, index: &mut LumpIndex) -> Result<()> {
         if self.gc_queue.is_empty() && self.ring_buffer.capacity() < self.ring_buffer.usage() * 2 {

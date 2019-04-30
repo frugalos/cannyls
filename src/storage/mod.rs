@@ -147,6 +147,9 @@ where
                         track!(self.data_region.get(portion).map(LumpData::from))?
                     }
                 };
+                if !self.journal_region.is_dirty() {
+                    self.data_region.sync_allocator();
+                }
                 Ok(Some(data))
             }
         }
@@ -211,6 +214,9 @@ where
             }
         }
         self.metrics.put_lumps_at_running.increment();
+        if !self.journal_region.is_dirty() {
+            self.data_region.sync_allocator();
+        }
         Ok(!updated)
     }
 
@@ -224,7 +230,11 @@ where
     /// 不整合ないしI/O周りで致命的な問題が発生している可能性があるので、
     /// 以後はこのインスタンスの使用を中止するのが望ましい.
     pub fn delete(&mut self, lump_id: &LumpId) -> Result<bool> {
-        track!(self.delete_if_exists(lump_id, true))
+        let deleted = track!(self.delete_if_exists(lump_id, true))?;
+        if !self.journal_region.is_dirty() {
+            self.data_region.sync_allocator();
+        }
+        Ok(deleted)
     }
 
     /// LumpIdのrange [start..end) を用いて、これに含まれるLumpIdを全て削除する。
@@ -248,9 +258,9 @@ where
         // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
         // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
         track!(self
-               .journal_region
-               .records_delete_range(&mut self.lump_index, range))?;
-        
+            .journal_region
+            .records_delete_range(&mut self.lump_index, range))?;
+
         for lump_id in &targets {
             if let Some(portion) = self.lump_index.remove(lump_id) {
                 self.metrics.delete_lumps.increment();
@@ -262,7 +272,10 @@ where
                     self.data_region.delete(portion);
                 }
             }
-        }        
+        }
+
+        track!(self.journal_region.sync())?;
+        self.data_region.sync_allocator();
 
         Ok(targets)
     }
@@ -307,6 +320,9 @@ where
     /// 全体的な性能を改善できる可能性がある.
     pub fn run_side_job_once(&mut self) -> Result<()> {
         track!(self.journal_region.run_side_job_once(&mut self.lump_index))?;
+        if !self.journal_region.is_dirty() {
+            self.data_region.sync_allocator();
+        }
         Ok(())
     }
 

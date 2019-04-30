@@ -39,6 +39,7 @@ pub struct DataPortionAllocator {
     size_to_free: BTreeSet<SizeBasedFreePortion>,
     end_to_free: BTreeSet<EndBasedFreePortion>,
     metrics: DataAllocatorMetrics,
+    pendings: Vec<DataPortion>,
 }
 impl DataPortionAllocator {
     /// アロケータを構築する.
@@ -75,6 +76,7 @@ impl DataPortionAllocator {
             size_to_free: BTreeSet::new(),
             end_to_free: BTreeSet::new(),
             metrics,
+            pendings: Vec::new(),
         };
         for portion in portions {
             track_assert!(portion.end().as_u64() <= tail, ErrorKind::InvalidInput);
@@ -134,6 +136,17 @@ impl DataPortionAllocator {
         self.metrics.count_releasion(portion.len);
         let portion = self.merge_free_portions_if_possible(FreePortion::from(portion));
         self.add_free_portion(portion);
+    }
+
+    pub fn reserve_release(&mut self, portion: DataPortion) {
+        assert!(self.is_allocated_portion(&portion), "{:?}", portion);
+        self.pendings.push(portion);
+    }
+
+    pub fn sync(&mut self) {
+        for p in ::std::mem::replace(&mut self.pendings, Vec::new()) {
+            self.release(p);
+        }
     }
 
     /// アロケータ用のメトリクスを返す.

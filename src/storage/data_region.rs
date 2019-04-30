@@ -89,7 +89,11 @@ where
     /// `portion`で未割当の領域が指定された場合には、
     /// 現在の実行スレッドがパニックする.
     pub fn delete(&mut self, portion: DataPortion) {
-        self.allocator.release(portion);
+        self.allocator.reserve_release(portion);
+    }
+
+    pub fn sync_allocator(&mut self) {
+        self.allocator.sync();
     }
 
     /// 部分領域の単位をブロックからバイトに変換する.
