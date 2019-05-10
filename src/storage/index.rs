@@ -38,7 +38,7 @@ impl LumpIndex {
     ///
     /// 結果は昇順にソートされている.
     pub fn remove(&mut self, lump_id: &LumpId) -> Option<Portion> {
-        self.map.remove(lump_id).map(|p| p.into())
+        self.map.remove(lump_id).map(std::convert::Into::into)
     }
 
     /// 登録されているlumpのID一覧を返す.

@@ -19,6 +19,8 @@ pub struct DataRegion<N> {
     nvm: N,
     block_size: BlockSize,
     metrics: DataRegionMetrics,
+    safe_release_mode: bool,
+    reserved_portions: Vec<DataPortion>,
 }
 impl<N> DataRegion<N>
 where
@@ -34,7 +36,22 @@ where
             nvm,
             block_size,
             metrics: DataRegionMetrics::new(metric_builder, capacity, allocator_metrics),
+            safe_release_mode: false,
+            reserved_portions: Vec::new(),
         }
+    }
+
+    /// 安全にリソースを解放するモードに移行するためのメソッド。
+    /// * `true`を渡すと、安全な解放モードに入る。
+    ///    * 安全な解放については [issue28](https://github.com/frugalos/cannyls/issue28) を参考のこと。
+    /// * `false`を渡すと、削除されたデータポーションが即座にアロケータから解放される。
+    pub fn enable_safe_release_mode(&mut self, enabling: bool) {
+        if !enabling && !self.reserved_portions.is_empty() {
+            // 削除対象ポーションが存在する状況で即時削除モードに切り替える場合は
+            // この段階で削除を行う
+            self.release_pending_portions();
+        }
+        self.safe_release_mode = enabling;
     }
 
     /// データ領域のメトリクスを返す.
@@ -89,7 +106,19 @@ where
     /// `portion`で未割当の領域が指定された場合には、
     /// 現在の実行スレッドがパニックする.
     pub fn delete(&mut self, portion: DataPortion) {
-        self.allocator.release(portion);
+        if self.safe_release_mode {
+            self.reserved_portions.push(portion);
+        } else {
+            self.allocator.release(portion);
+        }
+    }
+
+    pub fn release_pending_portions(&mut self) {
+        if self.safe_release_mode {
+            for p in ::std::mem::replace(&mut self.reserved_portions, Vec::new()) {
+                self.allocator.release(p);
+            }
+        }
     }
 
     /// 部分領域の単位をブロックからバイトに変換する.

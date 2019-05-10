@@ -23,6 +23,7 @@ pub struct StorageBuilder {
     instance_uuid: Option<Uuid>,
     journal: JournalRegionOptions,
     metrics: MetricBuilder,
+    safe_release_mode: bool,
 }
 impl StorageBuilder {
     /// 新しい`StorageBuilder`インスタンスを生成する.
@@ -32,7 +33,14 @@ impl StorageBuilder {
             instance_uuid: None,
             journal: JournalRegionOptions::default(),
             metrics: MetricBuilder::new(),
+            safe_release_mode: false,
         }
+    }
+
+    /// [issue28](https://github.com/frugalos/cannyls/issue28)
+    pub fn enable_safe_release_mode(&mut self) -> &mut Self {
+        self.safe_release_mode = true;
+        self
     }
 
     /// ストレージインスタンスを識別するためのUUIDを設定する.

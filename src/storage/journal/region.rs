@@ -152,6 +152,7 @@ where
         if self.gc_queue.is_empty() {
             track!(self.fill_gc_queue())?;
         } else if self.sync_countdown != self.options.sync_interval {
+            // バッファにエントリがある場合なので同期してしまう。
             track!(self.sync())?;
         } else {
             for _ in 0..GC_COUNT_IN_SIDE_JOB {
@@ -165,6 +166,10 @@ where
     /// ジャーナル領域用のメトリクスを返す.
     pub fn metrics(&self) -> &JournalRegionMetrics {
         &self.metrics
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.ring_buffer.is_dirty()
     }
 
     /// GC処理を一単位実行する.
@@ -248,10 +253,11 @@ where
         if self.gc_after_append {
             track!(self.gc_once(index))?; // レコード追記に合わせてGCを一単位行うことでコストを償却する
         }
-        track!(self.try_sync())?;
         Ok(())
     }
 
+    // ジャーナルキュー（のバッファ）にエントリを追加する。
+    // 十分なエントリが溜まっていれば同期を行う。
     fn append_record<B>(&mut self, index: &mut LumpIndex, record: &JournalRecord<B>) -> Result<()>
     where
         B: AsRef<[u8]>,
@@ -260,6 +266,7 @@ where
         if let Some((lump_id, portion)) = embedded {
             index.insert(lump_id, Portion::Journal(portion));
         }
+        track!(self.try_sync())?;
         Ok(())
     }
 

@@ -83,11 +83,18 @@ where
     data_region: DataRegion<N>,
     lump_index: LumpIndex,
     metrics: StorageMetrics,
+    safe_release_mode: bool,
 }
 impl<N> Storage<N>
 where
     N: NonVolatileMemory,
 {
+    /// [issue28](https://github.com/frugalos/cannyls/issue28)
+    pub fn enable_safe_release_mode(&mut self, enabling: bool) {
+        self.safe_release_mode = enabling;
+        self.data_region.enable_safe_release_mode(enabling);
+    }
+
     pub(crate) fn new(
         header: StorageHeader,
         journal_region: JournalRegion<N>,
@@ -101,6 +108,7 @@ where
             data_region,
             lump_index,
             metrics,
+            safe_release_mode: false,
         }
     }
 
@@ -176,6 +184,12 @@ where
         self.lump_index.list_range(range)
     }
 
+    fn release_pending_portions(&mut self) {
+        if !self.journal_region.is_dirty() {
+            self.data_region.release_pending_portions();
+        }
+    }
+
     /// lumpを保存する.
     ///
     /// 既に同じIDのlumpが存在する場合にはデータが上書きされる.
@@ -211,6 +225,10 @@ where
             }
         }
         self.metrics.put_lumps_at_running.increment();
+
+        if self.safe_release_mode {
+            self.release_pending_portions();
+        }
         Ok(!updated)
     }
 
@@ -224,7 +242,11 @@ where
     /// 不整合ないしI/O周りで致命的な問題が発生している可能性があるので、
     /// 以後はこのインスタンスの使用を中止するのが望ましい.
     pub fn delete(&mut self, lump_id: &LumpId) -> Result<bool> {
-        track!(self.delete_if_exists(lump_id, true))
+        let result = track!(self.delete_if_exists(lump_id, true))?;
+        if self.safe_release_mode {
+            self.release_pending_portions();
+        }
+        Ok(result)
     }
 
     /// LumpIdのrange [start..end) を用いて、これに含まれるLumpIdを全て削除する。
@@ -248,9 +270,9 @@ where
         // ジャーナル領域に範囲削除レコードを一つ書き込むため、一度のディスクアクセスが起こる。
         // 削除レコードを範囲分書き込むわけ *ではない* ため、複数回のディスクアクセスは発生しない。
         track!(self
-               .journal_region
-               .records_delete_range(&mut self.lump_index, range))?;
-        
+            .journal_region
+            .records_delete_range(&mut self.lump_index, range))?;
+
         for lump_id in &targets {
             if let Some(portion) = self.lump_index.remove(lump_id) {
                 self.metrics.delete_lumps.increment();
@@ -262,7 +284,12 @@ where
                     self.data_region.delete(portion);
                 }
             }
-        }        
+        }
+
+        if self.safe_release_mode {
+            track!(self.journal_region.sync())?;
+            self.release_pending_portions();
+        }
 
         Ok(targets)
     }

@@ -82,6 +82,10 @@ impl<N: NonVolatileMemory> JournalNvmBuffer<N> {
         &self.inner
     }
 
+    pub fn is_dirty(&self) -> bool {
+        self.maybe_dirty
+    }
+
     fn is_dirty_area(&self, offset: u64, length: usize) -> bool {
         if !self.maybe_dirty || length == 0 || self.write_buf.is_empty() {
             return false;
