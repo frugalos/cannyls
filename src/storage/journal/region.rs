@@ -44,6 +44,11 @@ impl<N> JournalRegion<N>
 where
     N: NonVolatileMemory,
 {
+    #[cfg(test)]
+    pub fn options(&self) -> &JournalRegionOptions {
+        &self.options
+    }
+
     pub fn journal_entries(&mut self) -> Result<(u64, u64, u64, Vec<JournalEntry>)> {
         self.ring_buffer.journal_entries()
     }
@@ -152,7 +157,6 @@ where
         if self.gc_queue.is_empty() {
             track!(self.fill_gc_queue())?;
         } else if self.sync_countdown != self.options.sync_interval {
-            // バッファにエントリがある場合なので同期してしまう。
             track!(self.sync())?;
         } else {
             for _ in 0..GC_COUNT_IN_SIDE_JOB {
@@ -168,8 +172,18 @@ where
         &self.metrics
     }
 
-    pub fn is_dirty(&self) -> bool {
-        self.ring_buffer.is_dirty()
+    /// ジャーナルバッファが同期され永続化された直後の状態かどうかを返す。
+    ///
+    /// この状態は、厳密には次を意味する。
+    /// 1. 現時点までに以下四種類の操作でバッファに書き込まれたジャーナルエントリは
+    /// 全てDiskに同期されている。
+    ///   (a) records_put
+    ///   (b) records_embed
+    ///   (c) records_delete
+    ///   (d) records_delete_range
+    /// 2. ジャーナルバッファは空である。
+    pub fn is_just_synced(&self) -> bool {
+        self.sync_countdown == self.options.sync_interval
     }
 
     /// GC処理を一単位実行する.
@@ -271,10 +285,11 @@ where
     }
 
     fn try_sync(&mut self) -> Result<()> {
+        assert!(self.sync_countdown >= 1);
+        self.sync_countdown -= 1;
+
         if self.sync_countdown == 0 {
             track!(self.sync())?;
-        } else {
-            self.sync_countdown -= 1;
         }
         Ok(())
     }

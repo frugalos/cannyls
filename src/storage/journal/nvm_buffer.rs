@@ -82,10 +82,6 @@ impl<N: NonVolatileMemory> JournalNvmBuffer<N> {
         &self.inner
     }
 
-    pub fn is_dirty(&self) -> bool {
-        self.maybe_dirty
-    }
-
     fn is_dirty_area(&self, offset: u64, length: usize) -> bool {
         if !self.maybe_dirty || length == 0 || self.write_buf.is_empty() {
             return false;
@@ -184,7 +180,7 @@ impl<N: NonVolatileMemory> Seek for JournalNvmBuffer<N> {
 impl<N: NonVolatileMemory> Read for JournalNvmBuffer<N> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.is_dirty_area(self.position, buf.len()) {
-            track!(self.flush_write_buf())?;
+            track!(self.sync())?;
         }
 
         let aligned_start = self.block_size().floor_align(self.position);

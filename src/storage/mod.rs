@@ -83,16 +83,23 @@ where
     data_region: DataRegion<N>,
     lump_index: LumpIndex,
     metrics: StorageMetrics,
-    safe_release_mode: bool,
 }
 impl<N> Storage<N>
 where
     N: NonVolatileMemory,
 {
-    /// [issue28](https://github.com/frugalos/cannyls/issue28)
+    /// 安全にリソースを解放する状態でStorageを作成する。
+    ///
+    /// 安全な解放については [wiki](https://github.com/frugalos/cannyls/wiki/Safe-Release-Mode) を参考のこと。
     pub fn enable_safe_release_mode(&mut self, enabling: bool) {
-        self.safe_release_mode = enabling;
         self.data_region.enable_safe_release_mode(enabling);
+    }
+
+    /// 安全にリソースを解放するモードに入っているかどうかを返す。
+    /// * `true`なら安全な解放モード
+    /// * `false`なら従来の解放モード
+    pub fn is_in_safe_release_mode(&self) -> bool {
+        self.data_region.is_in_safe_release_mode()
     }
 
     pub(crate) fn new(
@@ -108,7 +115,6 @@ where
             data_region,
             lump_index,
             metrics,
-            safe_release_mode: false,
         }
     }
 
@@ -184,8 +190,14 @@ where
         self.lump_index.list_range(range)
     }
 
+    /// ジャーナル領域が直前の操作に伴って同期済みであるならば
+    /// 遅延させている削除済みポーションを全て解放する。
+    ///
+    /// syncは実際にはバッファのflushとディスク同期の両方を行うため
+    /// is_just_synced() == trueならば
+    /// この時点までの全てのジャーナルレコードが同期済みである。
     fn release_pending_portions(&mut self) {
-        if !self.journal_region.is_dirty() {
+        if self.journal_region.is_just_synced() {
             self.data_region.release_pending_portions();
         }
     }
@@ -226,7 +238,7 @@ where
         }
         self.metrics.put_lumps_at_running.increment();
 
-        if self.safe_release_mode {
+        if self.is_in_safe_release_mode() {
             self.release_pending_portions();
         }
         Ok(!updated)
@@ -243,7 +255,7 @@ where
     /// 以後はこのインスタンスの使用を中止するのが望ましい.
     pub fn delete(&mut self, lump_id: &LumpId) -> Result<bool> {
         let result = track!(self.delete_if_exists(lump_id, true))?;
-        if self.safe_release_mode {
+        if self.is_in_safe_release_mode() {
             self.release_pending_portions();
         }
         Ok(result)
@@ -286,7 +298,7 @@ where
             }
         }
 
-        if self.safe_release_mode {
+        if self.is_in_safe_release_mode() {
             track!(self.journal_region.sync())?;
             self.release_pending_portions();
         }
@@ -870,6 +882,66 @@ mod tests {
         // https://github.com/frugalos/cannyls/wiki/Storage-Format
         let error = track!(Storage::open(nvm)).unwrap_err();
         assert!(*error.kind() == ErrorKind::StorageCorrupted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn safe_releasing_works() -> TestResult {
+        let dir = track_io!(TempDir::new("cannyls_test"))?;
+
+        let nvm = track!(FileNvm::create(
+            dir.path().join("test.lusf"),
+            BlockSize::min().ceil_align(512 * 0x1000 * 10)
+        ))?;
+        let mut storage = track!(StorageBuilder::new()
+            .journal_region_ratio(0.5)
+            .enable_safe_release_mode()
+            .create(nvm))?;
+        assert!(storage.is_in_safe_release_mode());
+
+        assert_eq!(storage.journal_region.options().sync_interval, 0x1000);
+
+        let mut portions = Vec::new();
+
+        for i in 0..(0x1000 / 2 - 1) {
+            track!(storage.put(&LumpId::new(i), &zeroed_data(42)))?;
+            let portion = storage
+                .lump_index
+                .get(&LumpId::new(i))
+                .expect("should succeed");
+            portions.push(portion.clone());
+            track!(storage.delete(&LumpId::new(i)))?;
+        }
+        track!(storage.put(&LumpId::new(10000), &zeroed_data(42)))?;
+        let portion = storage
+            .lump_index
+            .get(&LumpId::new(10000))
+            .expect("should succeed");
+        portions.push(portion.clone());
+
+        for p in &portions {
+            if let Portion::Data(portion) = p {
+                assert!(storage.data_region.is_allocated_portion(portion));
+            } else {
+                unreachable!("since we've put unembedded lump data");
+            }
+        }
+
+        assert_eq!(storage.journal_region.is_just_synced(), false);
+
+        // このDeleteによって0x1000個目のエントリが書き込まれるため
+        // ジャーナル領域の同期が行われる。
+        track!(storage.delete(&LumpId::new(10000)))?;
+        assert_eq!(storage.journal_region.is_just_synced(), true);
+
+        for p in &portions {
+            if let Portion::Data(portion) = p {
+                assert!(!storage.data_region.is_allocated_portion(portion));
+            } else {
+                unreachable!("since we've put unembedded lump data");
+            }
+        }
 
         Ok(())
     }

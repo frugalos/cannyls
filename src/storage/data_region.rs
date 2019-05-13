@@ -20,7 +20,11 @@ pub struct DataRegion<N> {
     block_size: BlockSize,
     metrics: DataRegionMetrics,
     safe_release_mode: bool,
-    reserved_portions: Vec<DataPortion>,
+
+    // 削除処理によってlump indexから外されたが
+    // まだアロケータに通知して解放することができない
+    // portionたちのバッファ
+    pending_portions: Vec<DataPortion>,
 }
 impl<N> DataRegion<N>
 where
@@ -37,21 +41,30 @@ where
             block_size,
             metrics: DataRegionMetrics::new(metric_builder, capacity, allocator_metrics),
             safe_release_mode: false,
-            reserved_portions: Vec::new(),
+            pending_portions: Vec::new(),
         }
     }
 
     /// 安全にリソースを解放するモードに移行するためのメソッド。
     /// * `true`を渡すと、安全な解放モードに入る。
-    ///    * 安全な解放については [issue28](https://github.com/frugalos/cannyls/issue28) を参考のこと。
-    /// * `false`を渡すと、削除されたデータポーションが即座にアロケータから解放される。
+    ///    * 安全な解放については [wiki](https://github.com/frugalos/cannyls/wiki/Safe-Release-Mode) を参考のこと。
+    /// * `false`を渡すと、従来の解放モードに入る。
+    ///    * このモードでは、削除されたデータポーションが即座にアロケータから解放される。
+    ///    * [issue28](https://github.com/frugalos/cannyls/issues28)があるため安全ではない。
     pub fn enable_safe_release_mode(&mut self, enabling: bool) {
-        if !enabling && !self.reserved_portions.is_empty() {
+        if !enabling && !self.pending_portions.is_empty() {
             // 削除対象ポーションが存在する状況で即時削除モードに切り替える場合は
             // この段階で削除を行う
             self.release_pending_portions();
         }
         self.safe_release_mode = enabling;
+    }
+
+    /// 安全にリソースを解放するモードに入っているかどうかを返す。
+    /// * `true`なら安全な解放モード
+    /// * `false`なら従来の解放モード
+    pub fn is_in_safe_release_mode(&self) -> bool {
+        self.safe_release_mode
     }
 
     /// データ領域のメトリクスを返す.
@@ -107,15 +120,22 @@ where
     /// 現在の実行スレッドがパニックする.
     pub fn delete(&mut self, portion: DataPortion) {
         if self.safe_release_mode {
-            self.reserved_portions.push(portion);
+            self.pending_portions.push(portion);
         } else {
             self.allocator.release(portion);
         }
     }
 
+    /// 解放を遅延させているデータポーションをアロケータに送ることで全て解放する。
+    ///
+    /// # 安全解放モードで呼び出す前提条件
+    /// 解放されるデータポーションに対応する削除レコードが、全て永続化されていること。
+    ///
+    /// # メモ
+    /// 通常の解放モードで呼び出しても効果はない。
     pub fn release_pending_portions(&mut self) {
         if self.safe_release_mode {
-            for p in ::std::mem::replace(&mut self.reserved_portions, Vec::new()) {
+            for p in ::std::mem::replace(&mut self.pending_portions, Vec::new()) {
                 self.allocator.release(p);
             }
         }
@@ -131,6 +151,11 @@ where
     /// `size`分のデータをカバーするのに必要なブロック数.
     fn block_count(&self, size: u32) -> u32 {
         (size + u32::from(self.block_size.as_u16()) - 1) / u32::from(self.block_size.as_u16())
+    }
+
+    #[cfg(test)]
+    pub fn is_allocated_portion(&self, portion: &DataPortion) -> bool {
+        self.allocator.is_allocated_portion(portion)
     }
 }
 
@@ -202,17 +227,23 @@ mod tests {
     use metrics::DataAllocatorMetrics;
     use nvm::MemoryNvm;
 
+    macro_rules! make_data_region_on_memory {
+        ($capacity:expr, $block_size:expr) => {{
+            let metrics = MetricBuilder::new();
+            let allocator = track!(DataPortionAllocator::build(
+                DataAllocatorMetrics::new(&metrics, $capacity, $block_size),
+                iter::empty(),
+            ))?;
+            let nvm = MemoryNvm::new(vec![0; $capacity as usize]);
+            DataRegion::new(&metrics, allocator, nvm)
+        }};
+    }
+
     #[test]
     fn data_region_works() -> TestResult {
         let capacity = 10 * 1024;
         let block_size = BlockSize::min();
-        let metrics = MetricBuilder::new();
-        let allocator = track!(DataPortionAllocator::build(
-            DataAllocatorMetrics::new(&metrics, capacity, block_size),
-            iter::empty(),
-        ))?;
-        let nvm = MemoryNvm::new(vec![0; capacity as usize]);
-        let mut region = DataRegion::new(&metrics, allocator, nvm);
+        let mut region = make_data_region_on_memory!(capacity, block_size);
 
         // put
         let mut data = DataRegionLumpData::new(3, block_size);
@@ -224,6 +255,55 @@ mod tests {
             region.get(portion).ok().map(|d| d.as_bytes().to_owned()),
             Some("foo".as_bytes().to_owned())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn enabling_and_confirming_safe_release_mode_work() -> TestResult {
+        let capacity = 10 * 1024;
+        let block_size = BlockSize::min();
+        let mut region = make_data_region_on_memory!(capacity, block_size);
+
+        // デフォルトでは安全解放モードを使わない。
+        assert_eq!(region.is_in_safe_release_mode(), false);
+
+        region.enable_safe_release_mode(true);
+        assert_eq!(region.is_in_safe_release_mode(), true);
+
+        Ok(())
+    }
+
+    #[test]
+    fn delayed_releasing_works() -> TestResult {
+        let capacity = 10 * 1024;
+        let block_size = BlockSize::min();
+        let mut region = make_data_region_on_memory!(capacity, block_size);
+
+        region.enable_safe_release_mode(true);
+
+        // put
+        let mut data = DataRegionLumpData::new(3, block_size);
+        data.as_bytes_mut().copy_from_slice("foo".as_bytes());
+        let portion = track!(region.put(&data))?;
+
+        // get
+        assert_eq!(
+            region.get(portion).ok().map(|d| d.as_bytes().to_owned()),
+            Some("foo".as_bytes().to_owned())
+        );
+
+        region.delete(portion.clone());
+
+        // まだ解放されていない。
+        assert_eq!(region.allocator.is_allocated_portion(&portion), true);
+
+        assert_eq!(region.pending_portions.len(), 1);
+
+        region.release_pending_portions();
+
+        // 解放された。
+        assert_eq!(region.allocator.is_allocated_portion(&portion), false);
+
         Ok(())
     }
 }

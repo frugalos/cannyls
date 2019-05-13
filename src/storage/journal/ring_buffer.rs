@@ -94,10 +94,6 @@ impl<N: NonVolatileMemory> JournalRingBuffer<N> {
         &self.metrics
     }
 
-    pub fn is_dirty(&self) -> bool {
-        self.nvm.is_dirty()
-    }
-
     /// 指定位置に埋め込まれたlumpデータの読み込みを行う.
     ///
     /// データの妥当性検証は`cannyls`内では行わない.
