@@ -293,13 +293,13 @@ where
                     // DataRegion::deleteはメモリアロケータに対する解放要求をするのみで
                     // ディスクにアクセスすることはない。
                     // （管理領域から外すだけで、例えばディスク上の値を0クリアするようなことはない）
-                    self.data_region.delete(portion);
+                    self.data_region.release_portion(portion);
                 }
             }
         }
 
         if self.is_in_safe_release_mode() {
-            track!(self.journal_region.sync())?;
+            track!(self.journal_sync())?;
             self.release_pending_portions();
         }
 

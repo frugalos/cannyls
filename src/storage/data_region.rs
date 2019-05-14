@@ -126,6 +126,17 @@ where
         }
     }
 
+    /// 指定された領域に格納されているデータを削除する.
+    ///
+    /// deleteと似ているが、こちらは安全解放モードでもpendingせず解放する。
+    /// # パニック
+    ///
+    /// `portion`で未割当の領域が指定された場合には、
+    /// 現在の実行スレッドがパニックする.
+    pub fn release_portion(&mut self, portion: DataPortion) {
+        self.allocator.release(portion);
+    }
+
     /// 解放を遅延させているデータポーションをアロケータに送ることで全て解放する。
     ///
     /// # 安全解放モードで呼び出す前提条件
