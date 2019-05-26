@@ -44,6 +44,11 @@ impl<N> JournalRegion<N>
 where
     N: NonVolatileMemory,
 {
+    #[cfg(test)]
+    pub fn options(&self) -> &JournalRegionOptions {
+        &self.options
+    }
+
     pub fn journal_entries(&mut self) -> Result<(u64, u64, u64, Vec<JournalEntry>)> {
         self.ring_buffer.journal_entries()
     }
@@ -167,6 +172,20 @@ where
         &self.metrics
     }
 
+    /// ジャーナルバッファが同期され永続化された直後の状態かどうかを返す。
+    ///
+    /// この状態は、厳密には次を意味する。
+    /// 1. 現時点までに以下四種類の操作でバッファに書き込まれたジャーナルエントリは
+    /// 全てDiskに同期されている。
+    ///   (a) records_put
+    ///   (b) records_embed
+    ///   (c) records_delete
+    ///   (d) records_delete_range
+    /// 2. ジャーナルバッファは空である。
+    pub fn is_just_synced(&self) -> bool {
+        self.sync_countdown == self.options.sync_interval
+    }
+
     /// GC処理を一単位実行する.
     fn gc_once(&mut self, index: &mut LumpIndex) -> Result<()> {
         if self.gc_queue.is_empty() && self.ring_buffer.capacity() < self.ring_buffer.usage() * 2 {
@@ -247,10 +266,11 @@ where
         if self.gc_after_append {
             track!(self.gc_once(index))?; // レコード追記に合わせてGCを一単位行うことでコストを償却する
         }
-        track!(self.try_sync())?;
         Ok(())
     }
 
+    // ジャーナルキュー（のバッファ）にエントリを追加する。
+    // 十分なエントリが溜まっていれば同期を行う。
     fn append_record<B>(&mut self, index: &mut LumpIndex, record: &JournalRecord<B>) -> Result<()>
     where
         B: AsRef<[u8]>,
@@ -259,14 +279,16 @@ where
         if let Some((lump_id, portion)) = embedded {
             index.insert(lump_id, Portion::Journal(portion));
         }
+        track!(self.try_sync())?;
         Ok(())
     }
 
     fn try_sync(&mut self) -> Result<()> {
+        assert!(self.sync_countdown >= 1);
+        self.sync_countdown -= 1;
+
         if self.sync_countdown == 0 {
             track!(self.sync())?;
-        } else {
-            self.sync_countdown -= 1;
         }
         Ok(())
     }

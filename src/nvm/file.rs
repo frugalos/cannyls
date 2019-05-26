@@ -487,7 +487,7 @@ mod tests {
         let mut parent = dir.as_ref();
         while let Some(p) = parent.parent() {
             parent = p;
-        };
+        }
         assert!(create_parent_directories(parent).is_ok());
         Ok(())
     }
