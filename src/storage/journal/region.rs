@@ -329,6 +329,7 @@ where
     }
 
     /// リングバッファおよびインデックスを前回の状態に復元する.
+    #[allow(clippy::identity_conversion)]
     fn restore(&mut self, index: &mut LumpIndex) -> Result<()> {
         for result in track!(self.ring_buffer.restore_entries())? {
             let JournalEntry { start, record } = track!(result)?;
