@@ -180,7 +180,7 @@ impl<N: NonVolatileMemory> Seek for JournalNvmBuffer<N> {
 impl<N: NonVolatileMemory> Read for JournalNvmBuffer<N> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.is_dirty_area(self.position, buf.len()) {
-            track!(self.sync())?;
+            track!(self.flush_write_buf())?;
         }
 
         let aligned_start = self.block_size().floor_align(self.position);
