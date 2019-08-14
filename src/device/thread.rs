@@ -1,5 +1,6 @@
 use fibers::sync::oneshot;
 use futures::{Future, Poll};
+use slog::Logger;
 use std::sync::mpsc as std_mpsc;
 use std::sync::mpsc::{RecvTimeoutError, SendError};
 use std::sync::Arc;
@@ -31,6 +32,8 @@ where
     start_busy_time: Option<Instant>,
     command_tx: CommandSender,
     command_rx: CommandReceiver,
+    id: String,
+    logger: Logger,
 }
 impl<N> DeviceThread<N>
 where
@@ -40,6 +43,8 @@ where
     pub fn spawn<F>(
         builder: DeviceBuilder,
         init_storage: F,
+        logger: Logger,
+        id: Option<String>,
     ) -> (DeviceThreadHandle, DeviceThreadMonitor)
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
@@ -53,12 +58,12 @@ where
             command_tx: command_tx.clone(),
             metrics: Arc::new(metrics.clone()),
         };
-
         thread::spawn(move || {
             let result = track!(init_storage()).and_then(|storage| {
                 metrics.storage = Some(storage.metrics().clone());
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
-
+                let id = id
+                    .unwrap_or_else(|| storage.header().instance_uuid.to_hyphenated().to_string());
                 let mut device = DeviceThread {
                     metrics: metrics.clone(),
                     queue: DeadlineQueue::new(),
@@ -70,6 +75,8 @@ where
                     start_busy_time: None,
                     command_tx,
                     command_rx,
+                    id,
+                    logger,
                 };
                 loop {
                     match track!(device.run_once()) {
@@ -139,6 +146,12 @@ where
                 Ok(true)
             }
             Command::Put(c) => {
+                debug!(
+                    self.logger,
+                    "Id:{} Put LumpId=(\"{}\")",
+                    self.id,
+                    c.lump_id()
+                );
                 let result = track!(self.storage.put(c.lump_id(), c.lump_data()));
                 if result.is_err() {
                     self.metrics.failed_commands.put.increment();

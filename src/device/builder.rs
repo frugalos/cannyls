@@ -4,6 +4,7 @@ use std::time::Duration;
 use super::thread::DeviceThread;
 use super::{Device, DeviceHandle};
 use nvm::NonVolatileMemory;
+use slog::Logger;
 use storage::Storage;
 use Result;
 
@@ -101,12 +102,13 @@ impl DeviceBuilder {
     ///
     /// 返り値の`Device`インスタンスが破棄されると、
     /// 起動したデバイススレッドも停止させられるので注意が必要.
-    pub fn spawn<F, N>(&self, init_storage: F) -> Device
+    pub fn spawn<F, N>(&self, init_storage: F, logger: Logger, id: Option<String>) -> Device
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
     {
-        let (thread_handle, thread_monitor) = DeviceThread::spawn(self.clone(), init_storage);
+        let (thread_handle, thread_monitor) =
+            DeviceThread::spawn(self.clone(), init_storage, logger, id);
         Device::new(thread_monitor, DeviceHandle(thread_handle))
     }
 }

@@ -5,6 +5,8 @@ extern crate futures;
 extern crate test;
 #[macro_use]
 extern crate trackable;
+#[macro_use]
+extern crate slog;
 
 use cannyls::device::DeviceBuilder;
 use cannyls::lump::{LumpData, LumpId};
@@ -12,6 +14,7 @@ use cannyls::nvm::MemoryNvm;
 use cannyls::storage::StorageBuilder;
 use cannyls::{Error, Result};
 use futures::Future;
+use slog::{Discard, Logger};
 use test::Bencher;
 
 fn id(id: usize) -> LumpId {
@@ -27,7 +30,8 @@ fn wait<F: Future<Error = Error>>(mut f: F) -> Result<()> {
 fn memory_put_small(b: &mut Bencher) {
     let nvm = MemoryNvm::new(vec![0; 1024 * 1024 * 1024]);
     let storage = track_try_unwrap!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm));
-    let device = DeviceBuilder::new().spawn(|| Ok(storage));
+    let logger = Logger::root(Discard, o!());
+    let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
     let d = device.handle();
     let _ = wait(d.request().wait_for_running().list()); // デバイスの起動を待機
 
@@ -43,7 +47,8 @@ fn memory_put_small(b: &mut Bencher) {
 fn memory_put_and_delete_small(b: &mut Bencher) {
     let nvm = MemoryNvm::new(vec![0; 1024 * 1024 * 1024]);
     let storage = track_try_unwrap!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm));
-    let device = DeviceBuilder::new().spawn(|| Ok(storage));
+    let logger = Logger::root(Discard, o!());
+    let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
     let d = device.handle();
     let _ = wait(d.request().wait_for_running().list()); // デバイスの起動を待機
 
