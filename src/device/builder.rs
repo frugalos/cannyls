@@ -4,7 +4,7 @@ use std::time::Duration;
 use super::thread::DeviceThread;
 use super::{Device, DeviceHandle};
 use nvm::NonVolatileMemory;
-use slog::Logger;
+use slog::{Discard, Logger};
 use storage::Storage;
 use Result;
 
@@ -16,6 +16,7 @@ pub struct DeviceBuilder {
     pub(crate) max_queue_len: usize,
     pub(crate) max_keep_busy_duration: Duration,
     pub(crate) busy_threshold: usize,
+    pub(crate) logger: Logger,
 }
 impl DeviceBuilder {
     /// デフォルト設定で`DeviceBuilder`インスタンスを生成する.
@@ -26,6 +27,7 @@ impl DeviceBuilder {
             max_queue_len: 100_000,
             max_keep_busy_duration: Duration::from_secs(600),
             busy_threshold: 1_000,
+            logger: Logger::root(Discard, o!()),
         }
     }
 
@@ -91,6 +93,12 @@ impl DeviceBuilder {
         self
     }
 
+    /// デバイススレッド用の logger を登録する
+    pub fn logger(&mut self, logger: Logger) -> &mut Self {
+        self.logger = logger;
+        self
+    }
+
     /// 指定されたストレージを扱う`Device`を起動する.
     ///
     /// 起動したデバイス用に、一つの専用OSスレッドが割り当てられる.
@@ -102,13 +110,13 @@ impl DeviceBuilder {
     ///
     /// 返り値の`Device`インスタンスが破棄されると、
     /// 起動したデバイススレッドも停止させられるので注意が必要.
-    pub fn spawn<F, N>(&self, init_storage: F, logger: Logger, id: Option<String>) -> Device
+    pub fn spawn<F, N>(&self, init_storage: F) -> Device
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
     {
         let (thread_handle, thread_monitor) =
-            DeviceThread::spawn(self.clone(), init_storage, logger, id);
+            DeviceThread::spawn(self.clone(), init_storage, self.logger.clone());
         Device::new(thread_monitor, DeviceHandle(thread_handle))
     }
 }

@@ -24,7 +24,6 @@ use deadline::Deadline;
 use lump::{LumpData, LumpId};
 use metrics::DeviceMetrics;
 use nvm::NonVolatileMemory;
-use slog::Logger;
 use storage::Storage;
 use {Error, Result};
 
@@ -76,13 +75,11 @@ mod thread;
 /// use cannyls::nvm::MemoryNvm;
 /// use cannyls::storage::Storage;
 /// use futures::Future;
-/// use slog::{Logger, Discard};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
 /// let storage = Storage::create(nvm)?;
-/// let logger = Logger::root(Discard, o!());
-/// let mut device = Device::spawn(|| Ok(storage), logger);
+/// let mut device = Device::spawn(|| Ok(storage));
 ///
 /// // ...デバイスに対する何らかの操作...
 ///
@@ -102,12 +99,12 @@ impl Device {
     /// デフォルト設定でデバイスを起動する.
     ///
     /// 設定を変更したい場合には`DeviceBuilder`を使用すること.
-    pub fn spawn<F, N>(init_storage: F, logger: Logger) -> Device
+    pub fn spawn<F, N>(init_storage: F) -> Device
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
     {
-        DeviceBuilder::new().spawn(init_storage, logger, None)
+        DeviceBuilder::new().spawn(init_storage)
     }
 
     /// デバイスを操作するためのハンドルを返す.
@@ -260,7 +257,6 @@ pub enum DeviceStatus {
 #[cfg(test)]
 mod tests {
     use fibers_global::execute;
-    use slog::{Discard, Logger};
     use std::ops::Range;
     use trackable::result::TestResult;
 
@@ -273,8 +269,7 @@ mod tests {
     fn device_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
-        let logger = Logger::root(Discard, o!());
-        let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
+        let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
         let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
 
@@ -296,8 +291,7 @@ mod tests {
     fn delete_range_all_data_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
-        let logger = Logger::root(Discard, o!());
-        let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
+        let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
         let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
 
@@ -324,8 +318,7 @@ mod tests {
     fn delete_range_no_data_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
-        let logger = Logger::root(Discard, o!());
-        let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
+        let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
         let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
 
@@ -355,8 +348,7 @@ mod tests {
     fn delete_range_partial_data_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
-        let logger = Logger::root(Discard, o!());
-        let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
+        let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
         let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
 
@@ -384,8 +376,7 @@ mod tests {
     fn list_range_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
-        let logger = Logger::root(Discard, o!());
-        let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
+        let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
         let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
 
@@ -459,8 +450,7 @@ mod tests {
                 .journal_region_ratio(0.99)
                 .create(nvm.clone()))?;
             let v = nvm.to_bytes();
-            let logger = Logger::root(Discard, o!());
-            let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
+            let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
             let _ = execute(d.request().wait_for_running().list());
             track!(execute(d.request().put(id(1234), embedded_data(b"hoge"))))?;
@@ -473,8 +463,7 @@ mod tests {
                 .journal_region_ratio(0.5)
                 .create(nvm.clone()))?;
             let v = nvm.to_bytes();
-            let logger = Logger::root(Discard, o!());
-            let device = DeviceBuilder::new().spawn(|| Ok(storage), logger, None);
+            let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
             let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
             track!(execute(
@@ -492,8 +481,7 @@ mod tests {
     fn device_stop_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(Storage::create(nvm))?;
-        let logger = Logger::root(Discard, o!());
-        let device = Device::spawn(|| Ok(storage), logger);
+        let device = Device::spawn(|| Ok(storage));
 
         device.stop(Deadline::Immediate); // 管理スレッドの停止を指示
         track!(execute(device))?; // 停止完了を待機

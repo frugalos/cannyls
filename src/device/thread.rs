@@ -32,7 +32,6 @@ where
     start_busy_time: Option<Instant>,
     command_tx: CommandSender,
     command_rx: CommandReceiver,
-    id: String,
     logger: Logger,
 }
 impl<N> DeviceThread<N>
@@ -44,7 +43,6 @@ where
         builder: DeviceBuilder,
         init_storage: F,
         logger: Logger,
-        id: Option<String>,
     ) -> (DeviceThreadHandle, DeviceThreadMonitor)
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
@@ -62,8 +60,6 @@ where
             let result = track!(init_storage()).and_then(|storage| {
                 metrics.storage = Some(storage.metrics().clone());
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
-                let id = id
-                    .unwrap_or_else(|| storage.header().instance_uuid.to_hyphenated().to_string());
                 let mut device = DeviceThread {
                     metrics: metrics.clone(),
                     queue: DeadlineQueue::new(),
@@ -75,7 +71,6 @@ where
                     start_busy_time: None,
                     command_tx,
                     command_rx,
-                    id,
                     logger,
                 };
                 loop {
@@ -146,12 +141,7 @@ where
                 Ok(true)
             }
             Command::Put(c) => {
-                debug!(
-                    self.logger,
-                    "Id:{} Put LumpId=(\"{}\")",
-                    self.id,
-                    c.lump_id()
-                );
+                debug!(self.logger, "Put LumpId=(\"{}\")", c.lump_id());
                 let result = track!(self.storage.put(c.lump_id(), c.lump_data()));
                 if result.is_err() {
                     self.metrics.failed_commands.put.increment();
