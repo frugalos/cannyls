@@ -522,9 +522,10 @@ mod tests {
 
         // マイナーバージョンを減らして、ヘッダを上書きする
         {
-            header.minor_version = header.minor_version.checked_sub(1).expect(
-                "このテストは`MINOR_VERSION >= 1`であることを前提としている",
-            );
+            header.minor_version = header
+                .minor_version
+                .checked_sub(1)
+                .expect("このテストは`MINOR_VERSION >= 1`であることを前提としている");
             let file = track_any_err!(OpenOptions::new().write(true).open(&path))?;
             track!(header.write_to(file))?;
         }

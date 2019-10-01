@@ -42,7 +42,6 @@ where
     pub fn spawn<F>(
         builder: DeviceBuilder,
         init_storage: F,
-        logger: Logger,
     ) -> (DeviceThreadHandle, DeviceThreadMonitor)
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
@@ -71,7 +70,7 @@ where
                     start_busy_time: None,
                     command_tx,
                     command_rx,
-                    logger,
+                    logger: builder.logger,
                 };
                 loop {
                     match track!(device.run_once()) {

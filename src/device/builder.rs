@@ -115,8 +115,7 @@ impl DeviceBuilder {
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
     {
-        let (thread_handle, thread_monitor) =
-            DeviceThread::spawn(self.clone(), init_storage, self.logger.clone());
+        let (thread_handle, thread_monitor) = DeviceThread::spawn(self.clone(), init_storage);
         Device::new(thread_monitor, DeviceHandle(thread_handle))
     }
 }
