@@ -68,8 +68,6 @@ mod thread;
 /// ```
 /// # extern crate cannyls;
 /// # extern crate futures;
-/// #[macro_use]
-/// # extern crate slog;
 /// use cannyls::deadline::Deadline;
 /// use cannyls::device::Device;
 /// use cannyls::nvm::MemoryNvm;
