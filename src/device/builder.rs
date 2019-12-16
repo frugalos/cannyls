@@ -4,6 +4,7 @@ use std::time::Duration;
 use super::thread::DeviceThread;
 use super::{Device, DeviceHandle};
 use nvm::NonVolatileMemory;
+use slog::{Discard, Logger};
 use storage::Storage;
 use Result;
 
@@ -15,6 +16,7 @@ pub struct DeviceBuilder {
     pub(crate) max_queue_len: usize,
     pub(crate) max_keep_busy_duration: Duration,
     pub(crate) busy_threshold: usize,
+    pub(crate) logger: Logger,
 }
 impl DeviceBuilder {
     /// デフォルト設定で`DeviceBuilder`インスタンスを生成する.
@@ -25,6 +27,7 @@ impl DeviceBuilder {
             max_queue_len: 100_000,
             max_keep_busy_duration: Duration::from_secs(600),
             busy_threshold: 1_000,
+            logger: Logger::root(Discard, o!()),
         }
     }
 
@@ -87,6 +90,12 @@ impl DeviceBuilder {
     /// デフォルト値は`1_000`.
     pub fn busy_threshold(&mut self, n: usize) -> &mut Self {
         self.busy_threshold = n;
+        self
+    }
+
+    /// デバイススレッド用の logger を登録する
+    pub fn logger(&mut self, logger: Logger) -> &mut Self {
+        self.logger = logger;
         self
     }
 

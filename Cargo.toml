@@ -21,6 +21,7 @@ libc = "0.2"
 prometrics = "0.1"
 trackable = "0.2"
 uuid = { version = "0.7", features = ["v4"] }
+slog = "2"
 
 [dev-dependencies]
 fibers_global = "0.1"

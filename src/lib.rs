@@ -67,6 +67,8 @@ extern crate tempdir;
 #[macro_use]
 extern crate trackable;
 extern crate uuid;
+#[macro_use]
+extern crate slog;
 
 pub use error::{Error, ErrorKind};
 
