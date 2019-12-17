@@ -151,8 +151,7 @@ impl DataRegionLumpData {
         let padding_len = BigEndian::read_u16(&buf[buf.len() - LUMP_DATA_TRAILER_SIZE..]) as usize;
         let data_size = buf
             .len()
-            .checked_sub(LUMP_DATA_TRAILER_SIZE + padding_len)
-            .unwrap_or(0);
+            .saturating_sub(LUMP_DATA_TRAILER_SIZE + padding_len);
 
         Ok(DataRegionLumpData {
             bytes: buf,
