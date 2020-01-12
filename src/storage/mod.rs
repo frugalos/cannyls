@@ -124,6 +124,11 @@ where
         &self.metrics
     }
 
+    /// ストレージに保存されている中で、指定された範囲が占有するバイト数を返す.
+    pub fn usage_range(&mut self, range: Range<LumpId>) -> ApproximateUsage {
+        self.lump_index.usage_range(range, self.header.block_size)
+    }
+
     /// 指定されたIDのlumpを取得する.
     ///
     /// # Error Handlings
@@ -383,6 +388,16 @@ where
         } else {
             Ok(false)
         }
+    }
+}
+
+/// ストレージ使用量の近似値。
+#[derive(Debug)]
+pub struct ApproximateUsage(u32);
+impl ApproximateUsage {
+    /// バイト数として近似値を返す。
+    pub fn as_bytes(&self) -> u32 {
+        self.0
     }
 }
 

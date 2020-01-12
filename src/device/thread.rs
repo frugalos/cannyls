@@ -197,6 +197,11 @@ where
                     }
                 }
             }
+            Command::UsageRange(c) => {
+                let result = self.storage.usage_range(c.lump_range());
+                c.reply(Ok(result));
+                Ok(true)
+            }
             Command::Stop(_) => Ok(false),
         }
     }

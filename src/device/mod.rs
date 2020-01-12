@@ -428,6 +428,44 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn usage_range_works() -> TestResult {
+        let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+        let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
+        let header = storage.header().clone();
+        let device = DeviceBuilder::new().spawn(|| Ok(storage));
+        let d = device.handle();
+        let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
+        let usage = track!(execute(d.request().usage_range(Range {
+            start: id(0),
+            end: id(10)
+        })))?;
+        assert_eq!(512, header.block_size.as_u16());
+        assert_eq!(0, usage.as_bytes());
+        // 1 block(included)
+        track!(execute(d.request().put(id(0), data(&vec![0; 510]))))?;
+        // 2 blocks(included)
+        track!(execute(d.request().put(id(1), data(&vec![0; 511]))))?;
+        // 1 block(excluded)
+        track!(execute(d.request().put(id(12), data(b"baz"))))?;
+        let usage = track!(execute(d.request().usage_range(Range {
+            start: id(0),
+            end: id(0)
+        })))?;
+        assert_eq!(0, usage.as_bytes());
+        let usage = track!(execute(d.request().usage_range(Range {
+            start: id(0),
+            end: id(1)
+        })))?;
+        assert_eq!(header.block_size.as_u16() * 1, usage.as_bytes() as u16);
+        let usage = track!(execute(d.request().usage_range(Range {
+            start: id(0),
+            end: id(10)
+        })))?;
+        assert_eq!(header.block_size.as_u16() * 3, usage.as_bytes() as u16);
+        Ok(())
+    }
+
     fn id(id: usize) -> LumpId {
         LumpId::new(id as u128)
     }
