@@ -5,7 +5,7 @@ use std::ops;
 use block::BlockSize;
 use lump::LumpId;
 use storage::portion::{DataPortion, Portion, PortionU64};
-use storage::ApproximateUsage;
+use storage::StorageUsage;
 
 /// Lump群の位置情報を保持するインデックス.
 ///
@@ -28,12 +28,8 @@ impl LumpIndex {
 
     /// 渡された範囲オブジェクトrangeを用いて、
     /// 登録されているlumpのうちrangeに含まれるものストレージ使用量を返す。
-    pub fn usage_range(
-        &self,
-        range: ops::Range<LumpId>,
-        block_size: BlockSize,
-    ) -> ApproximateUsage {
-        ApproximateUsage(
+    pub fn usage_range(&self, range: ops::Range<LumpId>, block_size: BlockSize) -> StorageUsage {
+        StorageUsage(
             self.map
                 .range(range)
                 .fold(0, |acc, (_, p)| acc + Portion::from(*p).len(block_size)),
