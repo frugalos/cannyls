@@ -7,6 +7,7 @@ use deadline::Deadline;
 use device::command::{self, Command};
 use device::DeviceStatus;
 use lump::{LumpData, LumpHeader, LumpId};
+use storage::ApproximateUsage;
 use {Error, ErrorKind, Result};
 
 /// デバイスに対してリクエストを発行するためのビルダ.
@@ -122,6 +123,18 @@ impl<'a> DeviceRequest<'a> {
         let deadline = self.deadline.unwrap_or_default();
         let (command, response) = command::ListLumpRange::new(range, deadline);
         self.send_command(Command::ListRange(command));
+        response
+    }
+
+    /// 範囲を指定してlump数を取得する.
+    ///
+    pub fn usage_range(
+        &self,
+        range: Range<LumpId>,
+    ) -> impl Future<Item = ApproximateUsage, Error = Error> {
+        let deadline = self.deadline.unwrap_or_default();
+        let (command, response) = command::UsageLumpRange::new(range, deadline);
+        self.send_command(Command::UsageRange(command));
         response
     }
 
