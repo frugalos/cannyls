@@ -7,7 +7,7 @@ use trackable::error::ErrorKindExt;
 
 use deadline::Deadline;
 use lump::{LumpData, LumpHeader, LumpId};
-use storage::ApproximateUsage;
+use storage::StorageUsage;
 use {Error, ErrorKind, Result};
 
 pub type CommandSender = Sender<Command>;
@@ -290,11 +290,11 @@ impl ListLumpRange {
 pub struct UsageLumpRange {
     range: Range<LumpId>,
     deadline: Deadline,
-    reply: AsyncReply<ApproximateUsage>,
+    reply: AsyncReply<StorageUsage>,
 }
 impl UsageLumpRange {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(range: Range<LumpId>, deadline: Deadline) -> (Self, AsyncResult<ApproximateUsage>) {
+    pub fn new(range: Range<LumpId>, deadline: Deadline) -> (Self, AsyncResult<StorageUsage>) {
         let (reply, result) = AsyncResult::new();
         let command = UsageLumpRange {
             range,
@@ -306,7 +306,7 @@ impl UsageLumpRange {
     pub fn lump_range(&self) -> Range<LumpId> {
         self.range.clone()
     }
-    pub fn reply(self, result: Result<ApproximateUsage>) {
+    pub fn reply(self, result: Result<StorageUsage>) {
         self.reply.send(result);
     }
 }

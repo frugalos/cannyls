@@ -125,7 +125,7 @@ where
     }
 
     /// ストレージに保存されている中で、指定された範囲が占有するバイト数を返す.
-    pub fn usage_range(&mut self, range: Range<LumpId>) -> ApproximateUsage {
+    pub fn usage_range(&mut self, range: Range<LumpId>) -> StorageUsage {
         self.lump_index.usage_range(range, self.header.block_size)
     }
 
@@ -392,9 +392,14 @@ where
 }
 
 /// ストレージ使用量の近似値。
-#[derive(Debug)]
-pub struct ApproximateUsage(u32);
-impl ApproximateUsage {
+#[derive(Debug, Clone, Default)]
+pub struct StorageUsage(u32);
+impl StorageUsage {
+    /// `StorageUsage` を生成する。
+    pub fn new(usage: u32) -> Self {
+        Self(usage)
+    }
+
     /// バイト数として近似値を返す。
     pub fn as_bytes(&self) -> u32 {
         self.0
