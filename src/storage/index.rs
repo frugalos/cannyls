@@ -29,7 +29,7 @@ impl LumpIndex {
     /// 渡された範囲オブジェクトrangeを用いて、
     /// 登録されているlumpのうちrangeに含まれるものストレージ使用量を返す。
     pub fn usage_range(&self, range: ops::Range<LumpId>, block_size: BlockSize) -> StorageUsage {
-        StorageUsage(
+        StorageUsage::Approximate(
             self.map
                 .range(range)
                 .fold(0, |acc, (_, p)| acc + Portion::from(*p).len(block_size)),
