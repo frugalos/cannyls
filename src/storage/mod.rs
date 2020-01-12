@@ -391,18 +391,36 @@ where
     }
 }
 
-/// ストレージ使用量の近似値。
-#[derive(Debug, Clone, Default)]
-pub struct StorageUsage(u32);
+/// ストレージ使用量。
+#[derive(Debug, Clone)]
+pub enum StorageUsage {
+    /// 取得に失敗したなど不明であることを表す。
+    Unknown,
+    /// 近似値。
+    Approximate(u32),
+}
 impl StorageUsage {
-    /// `StorageUsage` を生成する。
-    pub fn new(usage: u32) -> Self {
-        Self(usage)
+    /// 近似値として `StorageUsage` を生成する。
+    pub fn approximate(usage: u32) -> Self {
+        StorageUsage::Approximate(usage)
+    }
+
+    /// 使用量不明として `StorageUsage` を生成する。
+    pub fn unknown() -> Self {
+        StorageUsage::Unknown
     }
 
     /// バイト数として近似値を返す。
-    pub fn as_bytes(&self) -> u32 {
-        self.0
+    pub fn as_bytes(&self) -> Option<u32> {
+        match *self {
+            StorageUsage::Unknown => None,
+            StorageUsage::Approximate(bytes) => Some(bytes),
+        }
+    }
+}
+impl Default for StorageUsage {
+    fn default() -> Self {
+        StorageUsage::Unknown
     }
 }
 
