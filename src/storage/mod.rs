@@ -125,8 +125,19 @@ where
     }
 
     /// ストレージに保存されている中で、指定された範囲が占有するバイト数を返す.
-    pub fn usage_range(&mut self, range: Range<LumpId>) -> StorageUsage {
+    pub fn usage_range(&self, range: Range<LumpId>) -> StorageUsage {
         self.lump_index.usage_range(range, self.header.block_size)
+    }
+
+    /// ストレージに保存されている中で、指定された範囲が占有するバイト数を返す.
+    pub fn usage_range_skip(
+        &self,
+        range: Range<LumpId>,
+        skip: usize,
+        count: usize,
+    ) -> StorageUsage {
+        self.lump_index
+            .usage_range_skip(range, self.header.block_size, skip, count)
     }
 
     /// 指定されたIDのlumpを取得する.

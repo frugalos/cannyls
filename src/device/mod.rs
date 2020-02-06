@@ -11,6 +11,7 @@
 //!
 //! [ストレージ]: ../storage/index.html
 //! [Device]: struct.Device.html
+use fibers::Spawn;
 use futures::{Async, Future, Poll};
 use std::sync::Arc;
 
@@ -97,12 +98,13 @@ impl Device {
     /// デフォルト設定でデバイスを起動する.
     ///
     /// 設定を変更したい場合には`DeviceBuilder`を使用すること.
-    pub fn spawn<F, N>(init_storage: F) -> Device
+    pub fn spawn<F, N, S>(init_storage: F) -> Device
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
+        S: Spawn + Send + Clone + 'static,
     {
-        DeviceBuilder::new().spawn(init_storage)
+        DeviceBuilder::<S>::new().spawn(init_storage)
     }
 
     /// デバイスを操作するためのハンドルを返す.
@@ -440,8 +442,8 @@ mod tests {
             start: id(0),
             end: id(10)
         })))?;
-        assert_eq!(512, header.block_size.as_u16());
-        assert_eq!(0, usage.as_bytes());
+        assert_eq!(512u16, header.block_size.as_u16());
+        assert_eq!(0u32, usage.as_bytes().unwrap());
         // 1 block(included)
         track!(execute(d.request().put(id(0), data(&vec![0; 510]))))?;
         // 2 blocks(included)
@@ -452,17 +454,31 @@ mod tests {
             start: id(0),
             end: id(0)
         })))?;
-        assert_eq!(0, usage.as_bytes());
+        assert_eq!(0, usage.as_bytes().unwrap());
         let usage = track!(execute(d.request().usage_range(Range {
             start: id(0),
             end: id(1)
         })))?;
-        assert_eq!(header.block_size.as_u16() * 1, usage.as_bytes() as u16);
+        assert_eq!(
+            header.block_size.as_u16() * 1,
+            usage.as_bytes().unwrap() as u16
+        );
         let usage = track!(execute(d.request().usage_range(Range {
             start: id(0),
             end: id(10)
         })))?;
-        assert_eq!(header.block_size.as_u16() * 3, usage.as_bytes() as u16);
+        assert_eq!(
+            header.block_size.as_u16() * 3,
+            usage.as_bytes().unwrap() as u16
+        );
+        let usage = track!(execute(d.request().usage_range(Range {
+            start: id(0),
+            end: id(13)
+        })))?;
+        assert_eq!(
+            header.block_size.as_u16() * 4,
+            usage.as_bytes().unwrap() as u16
+        );
         Ok(())
     }
 

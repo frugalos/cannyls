@@ -26,6 +26,22 @@ impl LumpIndex {
         }
     }
 
+    pub fn usage_range_skip(
+        &self,
+        range: ops::Range<LumpId>,
+        block_size: BlockSize,
+        skip: usize,
+        count: usize,
+    ) -> StorageUsage {
+        StorageUsage::Approximate(
+            self.map
+                .range(range)
+                .skip(skip)
+                .take(count)
+                .fold(0, |acc, (_, p)| acc + Portion::from(*p).len(block_size)),
+        )
+    }
+
     /// 渡された範囲オブジェクトrangeを用いて、
     /// 登録されているlumpのうちrangeに含まれるものストレージ使用量を返す。
     pub fn usage_range(&self, range: ops::Range<LumpId>, block_size: BlockSize) -> StorageUsage {

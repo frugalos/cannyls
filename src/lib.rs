@@ -59,6 +59,7 @@ extern crate byteorder;
 extern crate fibers;
 #[cfg(test)]
 extern crate fibers_global;
+extern crate fibers_tasque;
 extern crate futures;
 extern crate libc;
 extern crate prometrics;
