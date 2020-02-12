@@ -129,17 +129,6 @@ where
         self.lump_index.usage_range(range, self.header.block_size)
     }
 
-    /// ストレージに保存されている中で、指定された範囲が占有するバイト数を返す.
-    pub fn usage_range_skip(
-        &self,
-        range: Range<LumpId>,
-        skip: usize,
-        count: usize,
-    ) -> StorageUsage {
-        self.lump_index
-            .usage_range_skip(range, self.header.block_size, skip, count)
-    }
-
     /// 指定されたIDのlumpを取得する.
     ///
     /// # Error Handlings
@@ -408,11 +397,11 @@ pub enum StorageUsage {
     /// 取得に失敗したなど不明であることを表す。
     Unknown,
     /// 近似値。
-    Approximate(u32),
+    Approximate(u64),
 }
 impl StorageUsage {
     /// 近似値として `StorageUsage` を生成する。
-    pub fn approximate(usage: u32) -> Self {
+    pub fn approximate(usage: u64) -> Self {
         StorageUsage::Approximate(usage)
     }
 
@@ -422,7 +411,7 @@ impl StorageUsage {
     }
 
     /// バイト数として近似値を返す。
-    pub fn as_bytes(&self) -> Option<u32> {
+    pub fn as_bytes(&self) -> Option<u64> {
         match *self {
             StorageUsage::Unknown => None,
             StorageUsage::Approximate(bytes) => Some(bytes),

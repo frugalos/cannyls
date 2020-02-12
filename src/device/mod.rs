@@ -11,7 +11,6 @@
 //!
 //! [ストレージ]: ../storage/index.html
 //! [Device]: struct.Device.html
-use fibers::Spawn;
 use futures::{Async, Future, Poll};
 use std::sync::Arc;
 
@@ -98,13 +97,12 @@ impl Device {
     /// デフォルト設定でデバイスを起動する.
     ///
     /// 設定を変更したい場合には`DeviceBuilder`を使用すること.
-    pub fn spawn<F, N, S>(init_storage: F) -> Device
+    pub fn spawn<F, N>(init_storage: F) -> Device
     where
         F: FnOnce() -> Result<Storage<N>> + Send + 'static,
         N: NonVolatileMemory + Send + 'static,
-        S: Spawn + Send + Clone + 'static,
     {
-        DeviceBuilder::<S>::new().spawn(init_storage)
+        DeviceBuilder::new().spawn(init_storage)
     }
 
     /// デバイスを操作するためのハンドルを返す.
@@ -443,7 +441,7 @@ mod tests {
             end: id(10)
         })))?;
         assert_eq!(512u16, header.block_size.as_u16());
-        assert_eq!(0u32, usage.as_bytes().unwrap());
+        assert_eq!(0, usage.as_bytes().unwrap());
         // 1 block(included)
         track!(execute(d.request().put(id(0), data(&vec![0; 510]))))?;
         // 2 blocks(included)

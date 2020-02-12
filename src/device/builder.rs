@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use super::thread::DeviceThread;
 use super::{Device, DeviceHandle};
-use fibers::Spawn;
 use nvm::NonVolatileMemory;
 use slog::{Discard, Logger};
 use storage::Storage;
@@ -11,19 +10,15 @@ use Result;
 
 /// `Device`のビルダ.
 #[derive(Debug, Clone)]
-pub struct DeviceBuilder<S> {
+pub struct DeviceBuilder {
     pub(crate) metrics: MetricBuilder,
     pub(crate) idle_threshold: Duration,
     pub(crate) max_queue_len: usize,
     pub(crate) max_keep_busy_duration: Duration,
     pub(crate) busy_threshold: usize,
     pub(crate) logger: Logger,
-    pub(crate) spawner: Option<S>,
 }
-impl<S> DeviceBuilder<S>
-where
-    S: Spawn + Send + Clone + 'static,
-{
+impl DeviceBuilder {
     /// デフォルト設定で`DeviceBuilder`インスタンスを生成する.
     pub fn new() -> Self {
         DeviceBuilder {
@@ -33,7 +28,6 @@ where
             max_keep_busy_duration: Duration::from_secs(600),
             busy_threshold: 1_000,
             logger: Logger::root(Discard, o!()),
-            spawner: None,
         }
     }
 
@@ -105,11 +99,6 @@ where
         self
     }
 
-    pub fn spawner(&mut self, spawner: S) -> &mut Self {
-        self.spawner = Some(spawner);
-        self
-    }
-
     /// 指定されたストレージを扱う`Device`を起動する.
     ///
     /// 起動したデバイス用に、一つの専用OSスレッドが割り当てられる.
@@ -130,11 +119,8 @@ where
         Device::new(thread_monitor, DeviceHandle(thread_handle))
     }
 }
-// impl<S> Default for DeviceBuilder<S>
-// where
-//     S: Spawn + Send + Clone + 'static,
-// {
-//     fn default() -> Self {
-//         Self::new<S>()
-//     }
-// }
+impl Default for DeviceBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
