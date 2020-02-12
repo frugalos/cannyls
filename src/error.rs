@@ -27,9 +27,7 @@ impl From<Error> for std::io::Error {
 }
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(e: std::sync::PoisonError<T>) -> Self {
-        ErrorKind::Other
-            .cause(std::error::Error::description(&e))
-            .into()
+        ErrorKind::Other.cause(e.to_string()).into()
     }
 }
 

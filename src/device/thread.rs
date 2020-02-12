@@ -179,7 +179,7 @@ where
                 }
             }
             Command::DeleteRange(c) => {
-                let result = track!(self.storage.delete_range(c.lump_range().clone()));
+                let result = track!(self.storage.delete_range(c.lump_range()));
                 if result.is_err() {
                     self.metrics.failed_commands.delete_range.increment();
                 }
