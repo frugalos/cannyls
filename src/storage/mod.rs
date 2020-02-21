@@ -411,7 +411,7 @@ impl StorageUsage {
     }
 
     /// バイト数として近似値を返す。
-    pub fn as_bytes(&self) -> Option<u64> {
+    pub fn bytecount(&self) -> Option<u64> {
         match *self {
             StorageUsage::Unknown => None,
             StorageUsage::Approximate(bytes) => Some(bytes),

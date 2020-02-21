@@ -441,7 +441,7 @@ mod tests {
             end: id(10)
         })))?;
         assert_eq!(512u16, header.block_size.as_u16());
-        assert_eq!(0, usage.as_bytes().unwrap());
+        assert_eq!(0, usage.bytecount().unwrap());
         // 1 block(included)
         track!(execute(d.request().put(id(0), data(&vec![0; 510]))))?;
         // 2 blocks(included)
@@ -452,14 +452,14 @@ mod tests {
             start: id(0),
             end: id(0)
         })))?;
-        assert_eq!(0, usage.as_bytes().unwrap());
+        assert_eq!(0, usage.bytecount().unwrap());
         let usage = track!(execute(d.request().usage_range(Range {
             start: id(0),
             end: id(1)
         })))?;
         assert_eq!(
             header.block_size.as_u16() * 1,
-            usage.as_bytes().unwrap() as u16
+            usage.bytecount().unwrap() as u16
         );
         let usage = track!(execute(d.request().usage_range(Range {
             start: id(0),
@@ -467,7 +467,7 @@ mod tests {
         })))?;
         assert_eq!(
             header.block_size.as_u16() * 3,
-            usage.as_bytes().unwrap() as u16
+            usage.bytecount().unwrap() as u16
         );
         let usage = track!(execute(d.request().usage_range(Range {
             start: id(0),
@@ -475,7 +475,7 @@ mod tests {
         })))?;
         assert_eq!(
             header.block_size.as_u16() * 4,
-            usage.as_bytes().unwrap() as u16
+            usage.bytecount().unwrap() as u16
         );
         Ok(())
     }
