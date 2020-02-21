@@ -667,6 +667,7 @@ pub struct DeviceCommandCounter {
     pub(crate) delete_range: Counter,
     pub(crate) list: Counter,
     pub(crate) list_range: Counter,
+    pub(crate) usage_range: Counter,
     pub(crate) stop: Counter,
 }
 impl DeviceCommandCounter {
@@ -705,6 +706,11 @@ impl DeviceCommandCounter {
         self.list_range.value() as u64
     }
 
+    /// USAGE_RANGEコマンド用のカウンタの値を返す.
+    pub fn usage_range(&self) -> u64 {
+        self.usage_range.value() as u64
+    }
+
     /// STOPコマンド用のカウンタの値を返す.
     pub fn stop(&self) -> u64 {
         self.stop.value() as u64
@@ -727,6 +733,7 @@ impl DeviceCommandCounter {
             delete_range: counter("delete_range"),
             list: counter("list"),
             list_range: counter("list_range"),
+            usage_range: counter("usage_range"),
             stop: counter("stop"),
         }
     }
@@ -740,12 +747,20 @@ impl DeviceCommandCounter {
             Command::DeleteRange { .. } => self.delete_range.increment(),
             Command::List { .. } => self.list.increment(),
             Command::ListRange { .. } => self.list_range.increment(),
+            Command::UsageRange { .. } => self.usage_range.increment(),
             Command::Stop { .. } => self.stop.increment(),
         }
     }
 
     fn sum(&self) -> u64 {
-        self.put() + self.get() + self.head() + self.delete() + self.list() + self.stop()
+        // FIXME: list_range() が抜けているのを直す
+        self.put()
+            + self.get()
+            + self.head()
+            + self.delete()
+            + self.list()
+            + self.usage_range()
+            + self.stop()
     }
 }
 

@@ -124,6 +124,11 @@ where
         &self.metrics
     }
 
+    /// ストレージに保存されている中で、指定された範囲が占有するバイト数を返す.
+    pub fn usage_range(&self, range: Range<LumpId>) -> StorageUsage {
+        self.lump_index.usage_range(range, self.header.block_size)
+    }
+
     /// 指定されたIDのlumpを取得する.
     ///
     /// # Error Handlings
@@ -383,6 +388,39 @@ where
         } else {
             Ok(false)
         }
+    }
+}
+
+/// ストレージ使用量。
+#[derive(Debug, Clone)]
+pub enum StorageUsage {
+    /// 取得に失敗したなど不明であることを表す。
+    Unknown,
+    /// 近似値。
+    Approximate(u64),
+}
+impl StorageUsage {
+    /// 近似値として `StorageUsage` を生成する。
+    pub fn approximate(usage: u64) -> Self {
+        StorageUsage::Approximate(usage)
+    }
+
+    /// 使用量不明として `StorageUsage` を生成する。
+    pub fn unknown() -> Self {
+        StorageUsage::Unknown
+    }
+
+    /// バイト数として近似値を返す。
+    pub fn bytecount(&self) -> Option<u64> {
+        match *self {
+            StorageUsage::Unknown => None,
+            StorageUsage::Approximate(bytes) => Some(bytes),
+        }
+    }
+}
+impl Default for StorageUsage {
+    fn default() -> Self {
+        StorageUsage::Unknown
     }
 }
 

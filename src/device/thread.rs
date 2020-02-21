@@ -20,7 +20,7 @@ use {Error, ErrorKind, Result};
 #[derive(Debug)]
 pub struct DeviceThread<N>
 where
-    N: NonVolatileMemory,
+    N: NonVolatileMemory + Send + 'static,
 {
     metrics: DeviceMetrics,
     queue: DeadlineQueue,
@@ -179,7 +179,7 @@ where
                 }
             }
             Command::DeleteRange(c) => {
-                let result = track!(self.storage.delete_range(c.lump_range().clone()));
+                let result = track!(self.storage.delete_range(c.lump_range()));
                 if result.is_err() {
                     self.metrics.failed_commands.delete_range.increment();
                 }
@@ -196,6 +196,11 @@ where
                         Ok(true)
                     }
                 }
+            }
+            Command::UsageRange(c) => {
+                let usage = self.storage.usage_range(c.lump_range());
+                c.reply(Ok(usage));
+                Ok(true)
             }
             Command::Stop(_) => Ok(false),
         }

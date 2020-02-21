@@ -7,6 +7,7 @@ use trackable::error::ErrorKindExt;
 
 use deadline::Deadline;
 use lump::{LumpData, LumpHeader, LumpId};
+use storage::StorageUsage;
 use {Error, ErrorKind, Result};
 
 pub type CommandSender = Sender<Command>;
@@ -21,6 +22,7 @@ pub enum Command {
     DeleteRange(DeleteLumpRange),
     List(ListLump),
     ListRange(ListLumpRange),
+    UsageRange(UsageLumpRange),
     Stop(StopDevice),
 }
 impl Command {
@@ -33,6 +35,7 @@ impl Command {
             Command::DeleteRange(ref c) => c.deadline,
             Command::List(ref c) => c.deadline,
             Command::ListRange(ref c) => c.deadline,
+            Command::UsageRange(ref c) => c.deadline,
             Command::Stop(ref c) => c.deadline,
         }
     }
@@ -45,6 +48,7 @@ impl Command {
             Command::DeleteRange(c) => c.reply.send(Err(error)),
             Command::List(c) => c.reply.send(Err(error)),
             Command::ListRange(c) => c.reply.send(Err(error)),
+            Command::UsageRange(c) => c.reply.send(Err(error)),
             Command::Stop(_) => {}
         }
     }
@@ -278,6 +282,31 @@ impl ListLumpRange {
         self.range.clone()
     }
     pub fn reply(self, result: Result<Vec<LumpId>>) {
+        self.reply.send(result);
+    }
+}
+
+#[derive(Debug)]
+pub struct UsageLumpRange {
+    range: Range<LumpId>,
+    deadline: Deadline,
+    reply: AsyncReply<StorageUsage>,
+}
+impl UsageLumpRange {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(range: Range<LumpId>, deadline: Deadline) -> (Self, AsyncResult<StorageUsage>) {
+        let (reply, result) = AsyncResult::new();
+        let command = UsageLumpRange {
+            range,
+            deadline,
+            reply,
+        };
+        (command, result)
+    }
+    pub fn lump_range(&self) -> Range<LumpId> {
+        self.range.clone()
+    }
+    pub fn reply(self, result: Result<StorageUsage>) {
         self.reply.send(result);
     }
 }
