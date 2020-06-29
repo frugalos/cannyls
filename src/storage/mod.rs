@@ -368,8 +368,7 @@ where
                 self.data_region.delete(portion);
                 e
             }))?;
-        self.lump_index
-            .insert(lump_id.clone(), Portion::Data(portion));
+        self.lump_index.insert(*lump_id, Portion::Data(portion));
         Ok(())
     }
 

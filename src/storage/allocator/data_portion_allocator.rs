@@ -105,8 +105,8 @@ impl DataPortionAllocator {
             .size_to_free
             // `SizedBasedFreePortion`の全順序を用いて `size` を含むFreePortionを探す
             .range((Included(&portion), Unbounded))
-            // 従って、nth(0)では（存在すれば）size以上かつ最小のFreePortionを取得することになる
-            .nth(0)
+            // 従って、next()では（存在すれば）size以上かつ最小のFreePortionを取得することになる
+            .next()
             .map(|p| p.0)
         {
             debug_assert!(U24::from(size) <= free.len());
@@ -174,7 +174,7 @@ impl DataPortionAllocator {
         if let Some(next) = self
             .end_to_free
             .range((Excluded(&EndBasedFreePortion(key)), Unbounded))
-            .nth(0)
+            .next()
             .map(|p| p.0)
         {
             // `next`については`portion.end < next.end`を満たす最小のポーションということしか分かっていない。
@@ -192,12 +192,12 @@ impl DataPortionAllocator {
     // 領域が重なっていない場合 <=> 返り値がtrue に限り、割当済みの領域であると判断する。
     //
     // メモ:
-    //    現在の実装では `nth(0)` を用いているため、
+    //    現在の実装では `next()` を用いているため、
     //    フリーリスト内の相異なる部分領域が互いに素であるという前提が必要である。
     //    ただしこの前提は通常のCannyLSの使用であれば成立する。
     fn is_allocated_portion(&self, portion: &DataPortion) -> bool {
         let key = EndBasedFreePortion(FreePortion::new(portion.start, 0));
-        if let Some(next) = self.end_to_free.range((Excluded(&key), Unbounded)).nth(0) {
+        if let Some(next) = self.end_to_free.range((Excluded(&key), Unbounded)).next() {
             // 終端位置が `portion.start` を超えるfree portionのうち最小のもの `next` については
             // - portion.end() <= next.0.start() すなわち overlapしていないか
             // - portion.end() > next.0.start() すなわち overlapしているか
