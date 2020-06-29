@@ -653,7 +653,7 @@ mod tests {
 
         // [NG] ストレージのブロック境界が、NVMのブロック境界に揃っていない
         nvm.set_block_size(track!(BlockSize::new(1024))?);
-        assert!(Storage::open(nvm.clone()).is_err());
+        assert!(Storage::open(nvm).is_err());
 
         Ok(())
     }

@@ -186,13 +186,13 @@ mod tests {
 
         // put
         let mut data = DataRegionLumpData::new(3, block_size);
-        data.as_bytes_mut().copy_from_slice("foo".as_bytes());
+        data.as_bytes_mut().copy_from_slice(b"foo");
         let portion = track!(region.put(&data))?;
 
         // get
         assert_eq!(
             region.get(portion).ok().map(|d| d.as_bytes().to_owned()),
-            Some("foo".as_bytes().to_owned())
+            Some(b"foo".to_vec())
         );
         Ok(())
     }

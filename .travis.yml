@@ -10,7 +10,7 @@ before_script:
 
 script:
   - cargo test
-  - cargo clippy
+  - cargo clippy --lib --tests
 
 matrix:
   allow_failures:
