@@ -29,6 +29,8 @@ use {Error, Result};
 
 mod builder;
 mod command;
+/// A module that contains failure-related structs/enums.
+pub mod failure;
 mod queue;
 mod request;
 mod thread;
