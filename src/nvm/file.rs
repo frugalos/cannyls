@@ -561,7 +561,7 @@ mod tests {
         let dir = track_io!(TempDir::new("cannyls_test"))?;
         let capacity = 10 * 1024;
         let filepath = dir.path().join("foo").join("bar").join("buzz");
-        let parent = track_io!(filepath.parent().ok_or(io::Error::new(
+        let parent = track_io!(filepath.parent().ok_or_else(|| io::Error::new(
             io::ErrorKind::NotFound,
             "Parent directory must be present"
         )))?;

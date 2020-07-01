@@ -466,14 +466,14 @@ mod tests {
         let nvm = MemoryNvm::new(vec![0; 1024]);
         let mut ring = JournalRingBuffer::new(nvm, 0, &MetricBuilder::new());
 
-        let record = record_embed("000", &vec![0; 997]);
+        let record = record_embed("000", &[0; 997]);
         assert_eq!(record.external_size(), 1020);
         assert_eq!(
             ring.enqueue(&record).err().map(|e| *e.kind()),
             Some(ErrorKind::StorageFull)
         );
 
-        let record = record_embed("000", &vec![0; 996]);
+        let record = record_embed("000", &[0; 996]);
         assert_eq!(record.external_size(), 1019);
         assert!(ring.enqueue(&record).is_ok());
         assert_eq!(ring.tail, 1019);

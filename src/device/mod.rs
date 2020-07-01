@@ -443,9 +443,9 @@ mod tests {
         assert_eq!(512u16, header.block_size.as_u16());
         assert_eq!(0, usage.bytecount().unwrap());
         // 1 block(included)
-        track!(execute(d.request().put(id(0), data(&vec![0; 510]))))?;
+        track!(execute(d.request().put(id(0), data(&[0; 510]))))?;
         // 2 blocks(included)
-        track!(execute(d.request().put(id(1), data(&vec![0; 511]))))?;
+        track!(execute(d.request().put(id(1), data(&[0; 511]))))?;
         // 1 block(excluded)
         track!(execute(d.request().put(id(12), data(b"baz"))))?;
         let usage = track!(execute(d.request().usage_range(Range {
@@ -458,7 +458,7 @@ mod tests {
             end: id(1)
         })))?;
         assert_eq!(
-            header.block_size.as_u16() * 1,
+            header.block_size.as_u16(),
             usage.bytecount().unwrap() as u16
         );
         let usage = track!(execute(d.request().usage_range(Range {
