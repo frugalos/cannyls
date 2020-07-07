@@ -29,6 +29,7 @@ use {Error, Result};
 
 mod builder;
 mod command;
+mod execution_observer;
 /// A module that contains failure-related structs/enums.
 pub mod failure;
 mod queue;

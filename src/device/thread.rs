@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
 
+use super::execution_observer::ExecutionObserver;
 use device::command::{Command, CommandReceiver, CommandSender};
 use device::queue::DeadlineQueue;
 use device::{DeviceBuilder, DeviceStatus};
@@ -33,6 +34,7 @@ where
     command_tx: CommandSender,
     command_rx: CommandReceiver,
     logger: Logger,
+    execution_observer: ExecutionObserver,
 }
 impl<N> DeviceThread<N>
 where
@@ -71,6 +73,10 @@ where
                     command_tx,
                     command_rx,
                     logger: builder.logger,
+                    execution_observer: ExecutionObserver::new(
+                        builder.io_latency_threshold.clone(),
+                        builder.io_error_threshold.clone(),
+                    ),
                 };
                 loop {
                     match track!(device.run_once()) {
@@ -141,10 +147,20 @@ where
             }
             Command::Put(c) => {
                 debug!(self.logger, "Put LumpId=(\"{}\")", c.lump_id());
+                // time here
+                let now = Instant::now();
                 let result = track!(self.storage.put(c.lump_id(), c.lump_data()));
-                if result.is_err() {
+                let elapsed = now.elapsed();
+                let has_error = result.is_err();
+                if has_error {
                     self.metrics.failed_commands.put.increment();
                 }
+                // record time
+                self.execution_observer.observe(elapsed, now, has_error);
+                if self.execution_observer.is_failing() {
+                    warn!(self.logger, "observer says it's failing!");
+                }
+
                 if let Some(e) = maybe_critical_error(&result) {
                     c.reply(result);
                     Err(e)
