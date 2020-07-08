@@ -45,6 +45,9 @@ impl ExecutionObserver {
     }
 
     pub fn is_failing(&self) -> bool {
+        // !!! FIXME BROKEN IMPLEMENTATION !!!
+        // this function always returns failing.
+        return true;
         // 時間は ok?
         if !self.last_io_duration.is_empty() {
             let count = self.io_latency_threshold.count;
