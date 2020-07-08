@@ -2,10 +2,7 @@ use prometrics::metrics::MetricBuilder;
 use std::time::Duration;
 
 use super::thread::DeviceThread;
-use super::{
-    failure::{IOErrorThreshold, IOLatencyThreshold},
-    Device, DeviceHandle,
-};
+use super::{failure::FailurePolicy, Device, DeviceHandle};
 use nvm::NonVolatileMemory;
 use slog::{Discard, Logger};
 use storage::Storage;
@@ -20,8 +17,7 @@ pub struct DeviceBuilder {
     pub(crate) max_keep_busy_duration: Duration,
     pub(crate) busy_threshold: usize,
     pub(crate) logger: Logger,
-    pub(crate) io_latency_threshold: IOLatencyThreshold,
-    pub(crate) io_error_threshold: IOErrorThreshold,
+    pub(crate) failure_policy: FailurePolicy,
 }
 impl DeviceBuilder {
     /// デフォルト設定で`DeviceBuilder`インスタンスを生成する.
@@ -33,8 +29,7 @@ impl DeviceBuilder {
             max_keep_busy_duration: Duration::from_secs(600),
             busy_threshold: 1_000,
             logger: Logger::root(Discard, o!()),
-            io_latency_threshold: Default::default(),
-            io_error_threshold: Default::default(),
+            failure_policy: FailurePolicy::default(),
         }
     }
 

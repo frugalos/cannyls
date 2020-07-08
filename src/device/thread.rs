@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
 
 use super::execution_observer::ExecutionObserver;
+use super::failure::TakedownPolicy;
 use device::command::{Command, CommandReceiver, CommandSender};
 use device::queue::DeadlineQueue;
 use device::{DeviceBuilder, DeviceStatus};
@@ -61,6 +62,7 @@ where
             let result = track!(init_storage()).and_then(|storage| {
                 metrics.storage = Some(storage.metrics().clone());
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
+                let takedown_policy = builder.failure_policy.takedown_policy;
                 let mut device = DeviceThread {
                     metrics: metrics.clone(),
                     queue: DeadlineQueue::new(),
@@ -74,13 +76,27 @@ where
                     command_rx,
                     logger: builder.logger,
                     execution_observer: ExecutionObserver::new(
-                        builder.io_latency_threshold.clone(),
-                        builder.io_error_threshold.clone(),
+                        builder.failure_policy.io_latency_threshold.clone(),
+                        builder.failure_policy.io_error_threshold.clone(),
                     ),
                 };
                 loop {
+                    // takedown_policy に応じて、エラー時にどうするか決める
+                    // 実装を簡単にするため、どんな場合もエラーの回数は覚えておく
+                    let mut error_count: u64 = 0;
                     match track!(device.run_once()) {
-                        Err(e) => break Err(e),
+                        Err(e) => {
+                            error_count += 1;
+                            match &takedown_policy {
+                                &TakedownPolicy::Stop => break Err(e),
+                                &TakedownPolicy::Tolerate(limit) => {
+                                    if error_count >= limit {
+                                        break Err(e);
+                                    }
+                                }
+                                &TakedownPolicy::Keep => {}
+                            }
+                        }
                         Ok(false) => break Ok(()),
                         Ok(true) => {}
                     }
@@ -120,6 +136,9 @@ where
         }
     }
 
+    /// Ok(true) を返す -> スレッド続行
+    /// Ok(false) を返す -> スレッド正常終了
+    /// Err(...) を返す -> スレッド異常終了
     fn handle_command(&mut self, command: Command) -> Result<bool> {
         match command {
             Command::Get(c) => {

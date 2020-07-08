@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 /// How does CannyLS act on failure?
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FailurePolicy {
     /// Configuration for IO latencies
     pub io_latency_threshold: IOLatencyThreshold,
@@ -26,7 +26,7 @@ impl Default for IOLatencyThreshold {
     fn default() -> Self {
         Self {
             count: 100,
-            time_limit: Duration::from_millis(2000),
+            time_limit: Duration::from_millis(200),
         }
     }
 }
@@ -43,7 +43,7 @@ pub struct IOErrorThreshold {
 impl Default for IOErrorThreshold {
     fn default() -> Self {
         Self {
-            count_limit: 10,
+            count_limit: 2,
             duration: Duration::from_millis(1000),
         }
     }
@@ -54,7 +54,13 @@ pub enum TakedownPolicy {
     /// Stop on error at once
     Stop,
     /// hold termination until x failures happen
-    Tolerance(u64),
+    Tolerate(u64),
     /// Keep running on error
     Keep,
+}
+
+impl Default for TakedownPolicy {
+    fn default() -> Self {
+        Self::Keep
+    }
 }
