@@ -177,7 +177,10 @@ where
                 // record time
                 self.execution_observer.observe(elapsed, now, has_error);
                 if self.execution_observer.is_failing() {
-                    warn!(self.logger, "observer says it's failing!");
+                    warn!(self.logger, "execution_observer says it's failing!");
+                    return Err(ErrorKind::Other
+                        .cause("execution_observer says it's failing!")
+                        .into());
                 }
 
                 if let Some(e) = maybe_critical_error(&result) {
