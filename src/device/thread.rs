@@ -175,6 +175,7 @@ where
                     self.metrics.failed_commands.put.increment();
                 }
                 // record time
+                warn!(self.logger, "recording...");
                 self.execution_observer.observe(elapsed, now, has_error);
                 if self.execution_observer.is_failing() {
                     warn!(self.logger, "execution_observer says it's failing!");
