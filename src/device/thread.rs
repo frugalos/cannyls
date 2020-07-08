@@ -178,6 +178,7 @@ where
                 self.execution_observer.observe(elapsed, now, has_error);
                 if self.execution_observer.is_failing() {
                     warn!(self.logger, "execution_observer says it's failing!");
+                    c.reply(result);
                     return Err(ErrorKind::Other
                         .cause("execution_observer says it's failing!")
                         .into());
