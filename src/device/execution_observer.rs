@@ -1,11 +1,15 @@
-use super::failure::{IOErrorThreshold, IOLatencyThreshold};
+use slog::Logger;
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
 };
 
+use super::failure::{IOErrorThreshold, IOLatencyThreshold};
+
 #[derive(Debug)]
 pub(crate) struct ExecutionObserver {
+    logger: Logger,
+
     // 時間の集計。直近 n 回の IO にかかった時間を持つ。
     io_latency_threshold: IOLatencyThreshold,
     last_io_duration: VecDeque<Duration>,
@@ -18,10 +22,12 @@ pub(crate) struct ExecutionObserver {
 
 impl ExecutionObserver {
     pub fn new(
+        logger: Logger,
         io_latency_threshold: IOLatencyThreshold,
         io_error_threshold: IOErrorThreshold,
     ) -> Self {
         Self {
+            logger,
             io_latency_threshold,
             last_io_duration: VecDeque::new(),
             last_io_duration_sum: Duration::from_secs(0),
@@ -52,6 +58,15 @@ impl ExecutionObserver {
             // 直近 count 回の平均が average 以上であれば、true を返す。
             // IO の回数が count に満たない場合は、確実に今後 count 回で average 以上になる、
             // つまりすでに count * average だけ時間を消費している場合にエラーを返す。
+            debug!(
+                self.logger,
+                "count = {}, desired average = {:?}, prod = {:?}, duration_sum = {:?}, duration = {:?}",
+                count,
+                average,
+                count * average,
+                self.last_io_duration_sum,
+                self.last_io_duration,
+            );
             if self.last_io_duration_sum >= count * average {
                 return true;
             }
@@ -62,6 +77,13 @@ impl ExecutionObserver {
             let &last_error = self.last_io_errors.back().unwrap();
             let count = self.io_error_threshold.count_limit;
             // もしエラーが count 個以上あって、最初と最後のエラーの間が duration 以下であったならば、エラーが設定値以上の頻度で起きている。
+            debug!(
+                self.logger,
+                "errors = {:?}, count_limit = {}, duration = {:?}",
+                self.last_io_errors,
+                count,
+                self.io_error_threshold.duration,
+            );
             if self.last_io_errors.len() >= count as usize
                 && last_error - first_error >= self.io_error_threshold.duration
             {
@@ -76,8 +98,12 @@ impl ExecutionObserver {
 mod tests {
     use super::*;
 
+    use slog::Discard;
+
     #[test]
     fn observe_works() {
+        let logger = Logger::root(Discard, o!());
+
         // 10 回の平均が 2 秒以上になったらダメ
         let io_latency_threshold = IOLatencyThreshold {
             count: 10,
@@ -90,16 +116,22 @@ mod tests {
             count_limit: 10,
         };
 
-        let mut execution_observer =
-            ExecutionObserver::new(io_latency_threshold.clone(), io_error_threshold.clone());
+        let mut execution_observer = ExecutionObserver::new(
+            logger.clone(),
+            io_latency_threshold.clone(),
+            io_error_threshold.clone(),
+        );
         // 2.1 秒かかる I/O を 10 回実行する
         for _ in 0..10 {
             execution_observer.observe(Duration::from_millis(2100), Instant::now(), false);
         }
         assert!(execution_observer.is_failing());
 
-        let mut execution_observer =
-            ExecutionObserver::new(io_latency_threshold.clone(), io_error_threshold.clone());
+        let mut execution_observer = ExecutionObserver::new(
+            logger.clone(),
+            io_latency_threshold.clone(),
+            io_error_threshold.clone(),
+        );
         //  1.9 秒かかる I/O を 10 回実行する
         for _ in 0..10 {
             execution_observer.observe(Duration::from_millis(1900), Instant::now(), false);
@@ -107,7 +139,7 @@ mod tests {
         assert!(!execution_observer.is_failing());
 
         let mut execution_observer =
-            ExecutionObserver::new(io_latency_threshold, io_error_threshold);
+            ExecutionObserver::new(logger, io_latency_threshold, io_error_threshold);
         // 間隔 2.1 秒 (< 20/9) で 10 回エラーを起こす
         let now = Instant::now();
         for i in 0..10 {

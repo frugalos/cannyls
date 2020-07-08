@@ -74,8 +74,9 @@ where
                     start_busy_time: None,
                     command_tx,
                     command_rx,
-                    logger: builder.logger,
+                    logger: builder.logger.clone(),
                     execution_observer: ExecutionObserver::new(
+                        builder.logger,
                         builder.failure_policy.io_latency_threshold.clone(),
                         builder.failure_policy.io_error_threshold.clone(),
                     ),
