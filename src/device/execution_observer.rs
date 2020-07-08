@@ -71,3 +71,52 @@ impl ExecutionObserver {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observe_works() {
+        // 10 回の平均が 2 秒以上になったらダメ
+        let io_latency_threshold = IOLatencyThreshold {
+            count: 10,
+            time_limit: Duration::from_secs(2),
+        };
+        // 2 秒間に 10 回以上エラーが起きていたらダメ
+        // 任意の 2 秒間なので、間隔 20/9 秒以下で 10 回連続でエラーが発生したら 2 秒間に 10 回起きた判定になることに注意。
+        let io_error_threshold = IOErrorThreshold {
+            duration: Duration::from_secs(2),
+            count_limit: 10,
+        };
+
+        let mut execution_observer =
+            ExecutionObserver::new(io_latency_threshold.clone(), io_error_threshold.clone());
+        // 2.1 秒かかる I/O を 10 回実行する
+        for _ in 0..10 {
+            execution_observer.observe(Duration::from_millis(2100), Instant::now(), false);
+        }
+        assert!(execution_observer.is_failing());
+
+        let mut execution_observer =
+            ExecutionObserver::new(io_latency_threshold.clone(), io_error_threshold.clone());
+        //  1.9 秒かかる I/O を 10 回実行する
+        for _ in 0..10 {
+            execution_observer.observe(Duration::from_millis(1900), Instant::now(), false);
+        }
+        assert!(!execution_observer.is_failing());
+
+        let mut execution_observer =
+            ExecutionObserver::new(io_latency_threshold, io_error_threshold);
+        // 間隔 2.1 秒 (< 20/9) で 10 回エラーを起こす
+        let now = Instant::now();
+        for i in 0..10 {
+            execution_observer.observe(
+                Duration::from_secs(0),
+                now + Duration::from_millis(2100) * i,
+                true,
+            );
+        }
+        assert!(execution_observer.is_failing());
+    }
+}
