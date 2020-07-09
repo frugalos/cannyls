@@ -101,6 +101,12 @@ impl DeviceBuilder {
         self
     }
 
+    /// FailuerPolicy を登録する
+    pub fn failure_policy(&mut self, failure_policy: FailurePolicy) -> &mut Self {
+        self.failure_policy = failure_policy;
+        self
+    }
+
     /// 指定されたストレージを扱う`Device`を起動する.
     ///
     /// 起動したデバイス用に、一つの専用OSスレッドが割り当てられる.
