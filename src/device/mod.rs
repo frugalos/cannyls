@@ -15,6 +15,7 @@ use futures::{Async, Future, Poll};
 use std::sync::Arc;
 
 pub use self::builder::DeviceBuilder;
+pub use self::long_queue_policy::LongQueuePolicy;
 pub use self::request::DeviceRequest;
 
 pub(crate) use self::command::Command; // `metrics`モジュール用に公開されている
@@ -29,6 +30,8 @@ use {Error, Result};
 
 mod builder;
 mod command;
+mod long_queue_policy;
+mod probabilistic;
 mod queue;
 mod request;
 mod thread;
