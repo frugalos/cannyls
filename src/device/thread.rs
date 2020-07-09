@@ -1,6 +1,7 @@
 use fibers::sync::oneshot;
 use futures::{Future, Poll};
 use slog::Logger;
+use std::fmt::Debug;
 use std::sync::mpsc as std_mpsc;
 use std::sync::mpsc::{RecvTimeoutError, SendError};
 use std::sync::Arc;
@@ -9,6 +10,8 @@ use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
 
 use device::command::{Command, CommandReceiver, CommandSender};
+use device::long_queue_policy::LongQueuePolicy;
+use device::probabilistic::{Dropper, ProbabilisticDropper};
 use device::queue::DeadlineQueue;
 use device::{DeviceBuilder, DeviceStatus};
 use metrics::DeviceMetrics;
@@ -33,6 +36,8 @@ where
     command_tx: CommandSender,
     command_rx: CommandReceiver,
     logger: Logger,
+    long_queue_policy: LongQueuePolicy,
+    dropper: Option<Box<dyn Dropper>>,
 }
 impl<N> DeviceThread<N>
 where
@@ -59,6 +64,12 @@ where
             let result = track!(init_storage()).and_then(|storage| {
                 metrics.storage = Some(storage.metrics().clone());
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
+                // LongQueuePolicy が Drop だったら、この後 run_once で使うため、dropper を作っておく。
+                let dropper = if let LongQueuePolicy::Drop { ratio } = builder.long_queue_policy {
+                    Some(Box::new(ProbabilisticDropper::new(ratio)) as Box<dyn Dropper>)
+                } else {
+                    None
+                };
                 let mut device = DeviceThread {
                     metrics: metrics.clone(),
                     queue: DeadlineQueue::new(),
@@ -71,6 +82,8 @@ where
                     command_tx,
                     command_rx,
                     logger: builder.logger,
+                    long_queue_policy: builder.long_queue_policy,
+                    dropper,
                 };
                 loop {
                     match track!(device.run_once()) {
@@ -94,7 +107,30 @@ where
             self.queue.push(command);
             Ok(true)
         } else if let Some(command) = self.queue.pop() {
-            track!(self.check_overload())?;
+            let result = track!(self.check_overload());
+            // 過負荷になっていたら、long_queue_policy に応じて挙動を変える
+            if let Err(e) = result {
+                match &self.long_queue_policy {
+                    LongQueuePolicy::RefuseNewRequests => {
+                        let result = self.handle_command_with_error(
+                            command,
+                            ErrorKind::Other.cause("refused").into(),
+                        );
+                        return Ok(result);
+                    }
+                    LongQueuePolicy::Stop => return Err(e),
+                    LongQueuePolicy::Drop { .. } => {
+                        // 確率 ratio で drop する
+                        if self.dropper.as_mut().unwrap().will_drop() {
+                            let result = self.handle_command_with_error(
+                                command,
+                                ErrorKind::Other.cause("dropped").into(),
+                            );
+                            return Ok(result);
+                        }
+                    }
+                }
+            }
             self.metrics.dequeued_commands.increment(&command);
             track!(self.handle_command(command))
         } else {
@@ -204,6 +240,26 @@ where
             }
             Command::Stop(_) => Ok(false),
         }
+    }
+
+    // command に対し、常に指定されたエラーを返答する。
+    // この関数自身は常に成功するため、handle_command と違い bool を返す。
+    fn handle_command_with_error(&mut self, command: Command, error: Error) -> bool {
+        match command {
+            Command::Get(c) => c.reply(Err(error)),
+            Command::Head(c) => c.reply(Err(error)),
+            Command::List(c) => c.reply(Err(error)),
+            Command::ListRange(c) => c.reply(Err(error)),
+            Command::Put(c) => c.reply(Err(error)),
+            Command::Delete(c) => c.reply(Err(error)),
+            Command::DeleteRange(c) => c.reply(Err(error)),
+            Command::UsageRange(c) => c.reply(Err(error)),
+            Command::Stop(_) => {
+                // ここに来た場合だけ false を返し、残りのパスは全て true を返す。
+                return false;
+            }
+        }
+        true
     }
 
     fn check_overload(&mut self) -> Result<()> {
