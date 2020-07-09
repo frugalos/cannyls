@@ -89,13 +89,13 @@ where
                         Err(e) => {
                             error_count += 1;
                             match &takedown_policy {
-                                &TakedownPolicy::Stop => break Err(e),
-                                &TakedownPolicy::Tolerate(limit) => {
-                                    if error_count >= limit {
+                                TakedownPolicy::Stop => break Err(e),
+                                TakedownPolicy::Tolerate(limit) => {
+                                    if error_count >= *limit {
                                         break Err(e);
                                     }
                                 }
-                                &TakedownPolicy::Keep => {}
+                                TakedownPolicy::Keep => {}
                             }
                         }
                         Ok(false) => break Ok(()),
