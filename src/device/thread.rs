@@ -66,7 +66,10 @@ where
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
                 // LongQueuePolicy が Drop だったら、この後 run_once で使うため、dropper を作っておく。
                 let dropper = if let LongQueuePolicy::Drop { ratio } = builder.long_queue_policy {
-                    Some(Box::new(ProbabilisticDropper::new(ratio)) as Box<dyn Dropper>)
+                    Some(
+                        Box::new(ProbabilisticDropper::new(builder.logger.clone(), ratio))
+                            as Box<dyn Dropper>,
+                    )
                 } else {
                     None
                 };
@@ -112,6 +115,7 @@ where
             if let Err(e) = result {
                 match &self.long_queue_policy {
                     LongQueuePolicy::RefuseNewRequests => {
+                        info!(self.logger, "Request refused: {:?}", command);
                         let result = self.handle_command_with_error(
                             command,
                             ErrorKind::Other.cause("refused").into(),
@@ -122,6 +126,7 @@ where
                     LongQueuePolicy::Drop { .. } => {
                         // 確率 ratio で drop する
                         if self.dropper.as_mut().unwrap().will_drop() {
+                            info!(self.logger, "Request dropped: {:?}", command);
                             let result = self.handle_command_with_error(
                                 command,
                                 ErrorKind::Other.cause("dropped").into(),
