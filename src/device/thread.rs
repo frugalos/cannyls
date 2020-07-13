@@ -81,10 +81,10 @@ where
                         builder.failure_policy.io_error_threshold.clone(),
                     ),
                 };
+                // 実装を簡単にするため、どんな場合もエラーの回数は覚えておく
+                let mut error_count: u64 = 0;
                 loop {
                     // takedown_policy に応じて、エラー時にどうするか決める
-                    // 実装を簡単にするため、どんな場合もエラーの回数は覚えておく
-                    let mut error_count: u64 = 0;
                     match track!(device.run_once()) {
                         Err(e) => {
                             error_count += 1;
