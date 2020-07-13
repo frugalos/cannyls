@@ -68,6 +68,13 @@ impl ExecutionObserver {
                 self.last_io_duration,
             );
             if self.last_io_duration_sum >= count * average {
+                warn!(
+                    self.logger,
+                    "Requests are taking too long";
+                    "duration_sum" => self.last_io_duration_sum.as_secs_f64(),
+                    "count" => count,
+                    "average" => average.as_secs_f64(),
+                );
                 return true;
             }
         }
@@ -87,6 +94,13 @@ impl ExecutionObserver {
             if self.last_io_errors.len() >= count as usize
                 && last_error - first_error >= self.io_error_threshold.duration
             {
+                warn!(
+                    self.logger,
+                    "Too many errors in a short period";
+                    "difference" => (last_error - first_error).as_secs_f64(),
+                    "count" => count,
+                    "error_threshold_duration" => self.io_error_threshold.duration.as_secs_f64(),
+                );
                 return true;
             }
         }
