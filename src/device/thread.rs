@@ -115,7 +115,9 @@ where
             if let Err(e) = result {
                 match &self.long_queue_policy {
                     LongQueuePolicy::RefuseNewRequests => {
-                        info!(self.logger, "Request refused: {:?}", command);
+                        // TODO: 現在の挙動は drop (drop 率 100%) と変わらない。
+                        // 本来の挙動は、キューに積もうとするときに拒否するというものなので、別の場所に実装する必要がある。
+                        info!(self.logger, "Request refused: {:?}", command; "queue_len" => self.queue.len());
                         let result = self.handle_command_with_error(
                             command,
                             ErrorKind::Other.cause("refused").into(),
@@ -126,7 +128,7 @@ where
                     LongQueuePolicy::Drop { .. } => {
                         // 確率 ratio で drop する
                         if self.dropper.as_mut().unwrap().will_drop() {
-                            info!(self.logger, "Request dropped: {:?}", command);
+                            info!(self.logger, "Request dropped: {:?}", command; "queue_len" => self.queue.len());
                             let result = self.handle_command_with_error(
                                 command,
                                 ErrorKind::Other.cause("dropped").into(),
