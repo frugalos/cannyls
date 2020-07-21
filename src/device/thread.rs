@@ -117,7 +117,14 @@ where
                     LongQueuePolicy::Drop { .. } => {
                         // 確率 ratio で drop する
                         if self.dropper.as_mut().unwrap().will_drop() {
-                            info!(self.logger, "Request dropped: {:?}", command; "queue_len" => self.queue.len());
+                            let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
+                            info!(
+                                self.logger,
+                                "Request dropped: {:?}",
+                                command;
+                                "queue_len" => self.queue.len(),
+                                "from_busy (sec)" => elapsed,
+                            );
                             self.metrics.dequeued_commands.increment(&command);
                             let result = self.handle_command_with_error(
                                 command,
@@ -149,7 +156,13 @@ where
         if let Err(e) = result {
             match &self.long_queue_policy {
                 LongQueuePolicy::RefuseNewRequests => {
-                    info!(self.logger, "Request refused: {:?}", command; "queue_len" => self.queue.len());
+                    let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
+                    info!(
+                        self.logger, "Request refused: {:?}",
+                        command;
+                        "queue_len" => self.queue.len(),
+                        "from_busy (sec)" => elapsed,
+                    );
                     self.metrics.dequeued_commands.increment(&command);
                     let result = self.handle_command_with_error(
                         command,
