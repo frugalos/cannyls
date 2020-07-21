@@ -106,29 +106,19 @@ where
 
     fn run_once(&mut self) -> Result<bool> {
         if let Ok(command) = self.command_rx.try_recv() {
-            track!(self.check_queue_limit())?;
-            self.queue.push(command);
-            Ok(true)
+            self.push_to_queue(command)
         } else if let Some(command) = self.queue.pop() {
             let result = track!(self.check_overload());
             // 過負荷になっていたら、long_queue_policy に応じて挙動を変える
             if let Err(e) = result {
                 match &self.long_queue_policy {
-                    LongQueuePolicy::RefuseNewRequests => {
-                        // TODO: 現在の挙動は drop (drop 率 100%) と変わらない。
-                        // 本来の挙動は、キューに積もうとするときに拒否するというものなので、別の場所に実装する必要がある。
-                        info!(self.logger, "Request refused: {:?}", command; "queue_len" => self.queue.len());
-                        let result = self.handle_command_with_error(
-                            command,
-                            ErrorKind::Other.cause("refused").into(),
-                        );
-                        return Ok(result);
-                    }
+                    LongQueuePolicy::RefuseNewRequests => {}
                     LongQueuePolicy::Stop => return Err(e),
                     LongQueuePolicy::Drop { .. } => {
                         // 確率 ratio で drop する
                         if self.dropper.as_mut().unwrap().will_drop() {
                             info!(self.logger, "Request dropped: {:?}", command; "queue_len" => self.queue.len());
+                            self.metrics.dequeued_commands.increment(&command);
                             let result = self.handle_command_with_error(
                                 command,
                                 ErrorKind::Other.cause("dropped").into(),
@@ -148,13 +138,31 @@ where
                     track!(self.storage.run_side_job_once())?;
                     Ok(true)
                 }
-                Ok(command) => {
-                    track!(self.check_queue_limit())?;
-                    self.queue.push(command);
-                    Ok(true)
-                }
+                Ok(command) => self.push_to_queue(command),
             }
         }
+    }
+
+    /// ここでも command の処理をせざるを得ない都合上、終了しないかどうかの bool 値を返す。
+    fn push_to_queue(&mut self, command: Command) -> Result<bool> {
+        let result = track!(self.check_overload());
+        if let Err(e) = result {
+            match &self.long_queue_policy {
+                LongQueuePolicy::RefuseNewRequests => {
+                    info!(self.logger, "Request refused: {:?}", command; "queue_len" => self.queue.len());
+                    self.metrics.dequeued_commands.increment(&command);
+                    let result = self.handle_command_with_error(
+                        command,
+                        ErrorKind::Other.cause("refused").into(),
+                    );
+                    return Ok(result);
+                }
+                LongQueuePolicy::Stop => return Err(e),
+                LongQueuePolicy::Drop { .. } => {}
+            }
+        }
+        self.queue.push(command);
+        Ok(true)
     }
 
     fn handle_command(&mut self, command: Command) -> Result<bool> {
@@ -280,12 +288,6 @@ where
         } else {
             self.start_busy_time = Some(Instant::now());
         }
-        Ok(())
-    }
-
-    fn check_queue_limit(&mut self) -> Result<()> {
-        track_assert!(self.queue.len() <= self.max_queue_len, ErrorKind::DeviceBusy;
-                      self.queue.len(), self.max_queue_len);
         Ok(())
     }
 }
