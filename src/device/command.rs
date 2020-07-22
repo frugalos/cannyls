@@ -39,6 +39,19 @@ impl Command {
             Command::Stop(ref c) => c.deadline,
         }
     }
+    pub fn prioritized(&self) -> bool {
+        match *self {
+            Command::Put(ref c) => c.prioritized,
+            Command::Get(ref c) => c.prioritized,
+            Command::Head(ref c) => c.prioritized,
+            Command::Delete(ref c) => c.prioritized,
+            Command::DeleteRange(ref c) => c.prioritized,
+            Command::List(ref c) => c.prioritized,
+            Command::ListRange(ref c) => c.prioritized,
+            Command::UsageRange(ref c) => c.prioritized,
+            Command::Stop(ref c) => c.prioritized,
+        }
+    }
     pub fn failed(self, error: Error) {
         match self {
             Command::Put(c) => c.reply.send(Err(error)),

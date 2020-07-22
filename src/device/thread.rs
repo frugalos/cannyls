@@ -128,7 +128,7 @@ where
                             self.metrics.dequeued_commands.increment(&command);
                             let result = self.handle_command_with_error(
                                 command,
-                                ErrorKind::Other.cause("dropped").into(),
+                                ErrorKind::RequestDropped.cause(e).into(),
                             );
                             return Ok(result);
                         }
@@ -153,7 +153,24 @@ where
     /// ここでも command の処理をせざるを得ない都合上、終了しないかどうかの bool 値を返す。
     fn push_to_queue(&mut self, command: Command) -> Result<bool> {
         let result = track!(self.check_overload());
-        if let Err(e) = result {
+        let prioritized = command.prioritized();
+        if let Err(e) = self.check_queue_limit() {
+            // queue length の hard limit を突破しているので、prioritized かどうかに関係なくエラーを返す。
+            // 常にリクエストを拒否すれば問題ない。
+            let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
+            info!(
+                self.logger, "Request refused (hard limit): {:?}",
+                command;
+                "queue_len" => self.queue.len(),
+                "queue_len_hard_limit" => self.max_queue_len,
+                "from_busy (sec)" => elapsed,
+            );
+            self.metrics.dequeued_commands.increment(&command);
+            let result =
+                self.handle_command_with_error(command, ErrorKind::RequestRefused.cause(e).into());
+            return Ok(result);
+        }
+        if let (Err(e), false) = (result, prioritized) {
             match &self.long_queue_policy {
                 LongQueuePolicy::RefuseNewRequests => {
                     let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
@@ -166,7 +183,7 @@ where
                     self.metrics.dequeued_commands.increment(&command);
                     let result = self.handle_command_with_error(
                         command,
-                        ErrorKind::Other.cause("refused").into(),
+                        ErrorKind::RequestRefused.cause(e).into(),
                     );
                     return Ok(result);
                 }
@@ -301,6 +318,12 @@ where
         } else {
             self.start_busy_time = Some(Instant::now());
         }
+        Ok(())
+    }
+
+    fn check_queue_limit(&mut self) -> Result<()> {
+        track_assert!(self.queue.len() <= self.max_queue_len, ErrorKind::DeviceBusy;
+                      self.queue.len(), self.max_queue_len);
         Ok(())
     }
 }
