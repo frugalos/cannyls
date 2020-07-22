@@ -128,7 +128,7 @@ mod tests {
     }
 
     fn command(lump_id: u128, deadline: Deadline) -> Command {
-        Command::Get(GetLump::new(LumpId::new(lump_id), deadline).0)
+        Command::Get(GetLump::new(LumpId::new(lump_id), deadline, false).0)
     }
 
     fn lump_id(command: Option<Command>) -> Option<u128> {
