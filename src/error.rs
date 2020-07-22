@@ -33,6 +33,7 @@ impl<T> From<std::sync::PoisonError<T>> for Error {
 
 /// 発生し得るエラーの種別.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorKind {
     /// リクエストキューが詰まっている、等の過負荷状態.
     ///
