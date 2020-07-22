@@ -330,13 +330,6 @@ where
 
     /// リングバッファおよびインデックスを前回の状態に復元する.
     fn restore(&mut self, index: &mut LumpIndex) -> Result<()> {
-        /*
-         * 次のattributeはclippy 0.0.212(265318db 2019-05-17)で生じる
-         * false positiveな警告を抑えるためのもの。
-         * (see: https://github.com/rust-lang/rust-clippy/issues/4133)
-         * Stableのclippy versionが上がったタイミングで外す。
-         */
-        #![allow(clippy::identity_conversion)]
         for result in track!(self.ring_buffer.restore_entries())? {
             let JournalEntry { start, record } = track!(result)?;
             match record {
