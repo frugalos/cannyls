@@ -46,10 +46,13 @@ impl Dropper for ProbabilisticDropper {
 mod tests {
     use super::*;
 
+    use slog::Discard;
+
     #[test]
     fn probabilistic_dropper_works() {
+        let logger = Logger::root(Discard, o!());
         let ratio = 0.3;
-        let mut dropper = ProbabilisticDropper::new(ratio);
+        let mut dropper = ProbabilisticDropper::new(logger, ratio);
         let n = 10000;
         // n 回実行しておよそ 3 割のリクエストが drop されることを確かめる。
         let mut dropped = 0;
