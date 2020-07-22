@@ -1,4 +1,4 @@
-use std;
+use std::{self, str::FromStr};
 use trackable;
 use trackable::error::ErrorKindExt;
 
@@ -33,6 +33,7 @@ impl<T> From<std::sync::PoisonError<T>> for Error {
 
 /// 発生し得るエラーの種別.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorKind {
     /// リクエストキューが詰まっている、等の過負荷状態.
     ///
@@ -88,6 +89,20 @@ pub enum ErrorKind {
     /// - バグ修正を行ってプログラムを更新する
     InconsistentState,
 
+    /// 過負荷のため、リクエストはドロップされた.
+    ///
+    /// # 典型的な対応策
+    ///
+    /// - 負荷の高い時間を避けてもう一度試す
+    RequestDropped,
+
+    /// 過負荷のため、リクエストは拒否された.
+    ///
+    /// # 典型的な対応策
+    ///
+    /// - 負荷の高い時間を避けてもう一度試す
+    RequestRefused,
+
     /// その他エラー.
     ///
     /// E.g., I/Oエラー
@@ -99,3 +114,38 @@ pub enum ErrorKind {
     Other,
 }
 impl trackable::error::ErrorKind for ErrorKind {}
+
+impl std::fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorKind::StorageFull => write!(f, "StorageFull"),
+            ErrorKind::StorageCorrupted => write!(f, "StorageCorrupted"),
+            ErrorKind::DeviceBusy => write!(f, "DeviceBusy"),
+            ErrorKind::DeviceTerminated => write!(f, "DeviceTerminated"),
+            ErrorKind::InvalidInput => write!(f, "InvalidInput"),
+            ErrorKind::InconsistentState => write!(f, "InconsistentState"),
+            ErrorKind::RequestDropped => write!(f, "RequestDropped"),
+            ErrorKind::RequestRefused => write!(f, "RequestRefused"),
+            ErrorKind::Other => write!(f, "Other"),
+        }
+    }
+}
+
+impl FromStr for ErrorKind {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let kind = match s {
+            "StorageFull" => ErrorKind::StorageFull,
+            "StorageCorrupted" => ErrorKind::StorageCorrupted,
+            "DeviceBusy" => ErrorKind::DeviceBusy,
+            "DeviceTerminated" => ErrorKind::DeviceTerminated,
+            "InvalidInput" => ErrorKind::InvalidInput,
+            "RequestDropped" => ErrorKind::RequestDropped,
+            "RequestRefused" => ErrorKind::RequestRefused,
+            "InconsistentState" => ErrorKind::InconsistentState,
+            "Other" => ErrorKind::Other,
+            _ => return Err(()),
+        };
+        Ok(kind)
+    }
+}
