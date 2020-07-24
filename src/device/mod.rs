@@ -15,6 +15,7 @@ use futures::{Async, Future, Poll};
 use std::sync::Arc;
 
 pub use self::builder::DeviceBuilder;
+pub use self::failure::{FailurePolicy, IOErrorThreshold, IOLatencyThreshold};
 pub use self::request::DeviceRequest;
 
 pub(crate) use self::command::Command; // `metrics`モジュール用に公開されている
@@ -29,6 +30,9 @@ use {Error, Result};
 
 mod builder;
 mod command;
+mod execution_observer;
+/// A module that contains failure-related structs/enums.
+mod failure;
 mod queue;
 mod request;
 mod thread;

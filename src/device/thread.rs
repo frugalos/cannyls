@@ -8,6 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
 
+use super::execution_observer::ExecutionObserver;
+use super::failure::TakedownPolicy;
 use device::command::{Command, CommandReceiver, CommandSender};
 use device::queue::DeadlineQueue;
 use device::{DeviceBuilder, DeviceStatus};
@@ -33,6 +35,7 @@ where
     command_tx: CommandSender,
     command_rx: CommandReceiver,
     logger: Logger,
+    execution_observer: ExecutionObserver,
 }
 impl<N> DeviceThread<N>
 where
@@ -59,6 +62,7 @@ where
             let result = track!(init_storage()).and_then(|storage| {
                 metrics.storage = Some(storage.metrics().clone());
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
+                let takedown_policy = builder.failure_policy.takedown_policy;
                 let mut device = DeviceThread {
                     metrics: metrics.clone(),
                     queue: DeadlineQueue::new(),
@@ -70,11 +74,30 @@ where
                     start_busy_time: None,
                     command_tx,
                     command_rx,
-                    logger: builder.logger,
+                    logger: builder.logger.clone(),
+                    execution_observer: ExecutionObserver::new(
+                        builder.logger,
+                        builder.failure_policy.io_latency_threshold.clone(),
+                        builder.failure_policy.io_error_threshold.clone(),
+                    ),
                 };
+                // 実装を簡単にするため、どんな場合もエラーの回数は覚えておく
+                let mut error_count: u64 = 0;
                 loop {
+                    // takedown_policy に応じて、エラー時にどうするか決める
                     match track!(device.run_once()) {
-                        Err(e) => break Err(e),
+                        Err(e) => {
+                            error_count += 1;
+                            match &takedown_policy {
+                                TakedownPolicy::Stop => break Err(e),
+                                TakedownPolicy::Tolerate(limit) => {
+                                    if error_count >= *limit {
+                                        break Err(e);
+                                    }
+                                }
+                                TakedownPolicy::Keep => {}
+                            }
+                        }
                         Ok(false) => break Ok(()),
                         Ok(true) => {}
                     }
@@ -96,7 +119,14 @@ where
         } else if let Some(command) = self.queue.pop() {
             track!(self.check_overload())?;
             self.metrics.dequeued_commands.increment(&command);
-            track!(self.handle_command(command))
+            let result = track!(self.handle_command(command))?;
+            if self.execution_observer.is_failing() {
+                warn!(self.logger, "execution_observer says it's failing!");
+                return Err(ErrorKind::Other
+                    .cause("execution_observer says it's failing!")
+                    .into());
+            }
+            Ok(result)
         } else {
             match self.command_rx.recv_timeout(self.idle_threshold) {
                 Err(RecvTimeoutError::Disconnected) => unreachable!(),
@@ -114,13 +144,23 @@ where
         }
     }
 
+    /// Ok(true) を返す -> スレッド続行
+    /// Ok(false) を返す -> スレッド正常終了
+    /// Err(...) を返す -> スレッド異常終了
     fn handle_command(&mut self, command: Command) -> Result<bool> {
         match command {
             Command::Get(c) => {
+                // time here
+                let now = Instant::now();
                 let result = track!(self.storage.get(c.lump_id()));
+                let elapsed = now.elapsed();
                 if result.is_err() {
                     self.metrics.failed_commands.get.increment();
                 }
+                // record here
+                debug!(self.logger, "execution_observer is recording... (read)");
+                self.execution_observer
+                    .observe(elapsed, now, result.is_err());
                 c.reply(result);
                 Ok(true)
             }
@@ -141,10 +181,18 @@ where
             }
             Command::Put(c) => {
                 debug!(self.logger, "Put LumpId=(\"{}\")", c.lump_id());
+                // time here
+                let now = Instant::now();
                 let result = track!(self.storage.put(c.lump_id(), c.lump_data()));
+                let elapsed = now.elapsed();
                 if result.is_err() {
                     self.metrics.failed_commands.put.increment();
                 }
+                // record time
+                debug!(self.logger, "execution_observer is recording... (write)");
+                self.execution_observer
+                    .observe(elapsed, now, result.is_err());
+
                 if let Some(e) = maybe_critical_error(&result) {
                     c.reply(result);
                     Err(e)
@@ -160,10 +208,17 @@ where
                 }
             }
             Command::Delete(c) => {
+                // time here
+                let now = Instant::now();
                 let result = track!(self.storage.delete(c.lump_id()));
+                let elapsed = now.elapsed();
                 if result.is_err() {
                     self.metrics.failed_commands.delete.increment();
                 }
+                // record here
+                debug!(self.logger, "execution_observer is recording... (delete)");
+                self.execution_observer
+                    .observe(elapsed, now, result.is_err());
                 if let Some(e) = maybe_critical_error(&result) {
                     c.reply(result);
                     Err(e)
@@ -179,10 +234,20 @@ where
                 }
             }
             Command::DeleteRange(c) => {
+                // time here
+                let now = Instant::now();
                 let result = track!(self.storage.delete_range(c.lump_range()));
+                let elapsed = now.elapsed();
                 if result.is_err() {
                     self.metrics.failed_commands.delete_range.increment();
                 }
+                // record here
+                debug!(
+                    self.logger,
+                    "execution_observer is recording... (delete_range)",
+                );
+                self.execution_observer
+                    .observe(elapsed, now, result.is_err());
                 if let Some(e) = maybe_critical_error(&result) {
                     c.reply(result);
                     Err(e)
