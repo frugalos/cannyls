@@ -106,8 +106,9 @@ where
 
     fn run_once(&mut self) -> Result<bool> {
         if let Ok(command) = self.command_rx.try_recv() {
-            self.push_to_queue(command)
-        } else if let Some(command) = self.queue.pop() {
+            return self.push_to_queue(command);
+        }
+        if let Some(command) = self.queue.pop() {
             let result = track!(self.check_overload());
             // 過負荷になっていたら、long_queue_policy に応じて挙動を変える
             if let Err(e) = result {
@@ -136,17 +137,17 @@ where
                 }
             }
             self.metrics.dequeued_commands.increment(&command);
-            track!(self.handle_command(command))
-        } else {
-            match self.command_rx.recv_timeout(self.idle_threshold) {
-                Err(RecvTimeoutError::Disconnected) => unreachable!(),
-                Err(RecvTimeoutError::Timeout) => {
-                    self.metrics.side_jobs.increment();
-                    track!(self.storage.run_side_job_once())?;
-                    Ok(true)
-                }
-                Ok(command) => self.push_to_queue(command),
+            return track!(self.handle_command(command));
+        }
+
+        match self.command_rx.recv_timeout(self.idle_threshold) {
+            Err(RecvTimeoutError::Disconnected) => unreachable!(),
+            Err(RecvTimeoutError::Timeout) => {
+                self.metrics.side_jobs.increment();
+                track!(self.storage.run_side_job_once())?;
+                Ok(true)
             }
+            Ok(command) => self.push_to_queue(command),
         }
     }
 
