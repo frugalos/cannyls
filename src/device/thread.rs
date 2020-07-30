@@ -37,7 +37,7 @@ where
     command_rx: CommandReceiver,
     logger: Logger,
     long_queue_policy: LongQueuePolicy,
-    dropper: Option<Box<dyn Dropper>>,
+    dropper: Box<dyn Dropper>,
 }
 impl<N> DeviceThread<N>
 where
@@ -64,15 +64,15 @@ where
             let result = track!(init_storage()).and_then(|storage| {
                 metrics.storage = Some(storage.metrics().clone());
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
-                // LongQueuePolicy が Drop だったら、この後 run_once で使うため、dropper を作っておく。
-                let dropper = if let LongQueuePolicy::Drop { ratio } = builder.long_queue_policy {
-                    Some(
-                        Box::new(ProbabilisticDropper::new(builder.logger.clone(), ratio))
-                            as Box<dyn Dropper>,
-                    )
-                } else {
-                    None
+                // LongQueuePolicy が RefuseNewRequests か Drop だったら、この後 run_once で使うため、dropper を作っておく。
+                // Stop の場合も実装を簡単にするためにプレイスホルダーの dropper を作る。
+                let ratio = match builder.long_queue_policy {
+                    LongQueuePolicy::RefuseNewRequests { ratio } => ratio,
+                    LongQueuePolicy::Stop => 0.0,
+                    LongQueuePolicy::Drop { ratio } => ratio,
                 };
+                let dropper = Box::new(ProbabilisticDropper::new(builder.logger.clone(), ratio))
+                    as Box<dyn Dropper>;
                 let mut device = DeviceThread {
                     metrics: metrics.clone(),
                     queue: DeadlineQueue::new(),
@@ -113,11 +113,11 @@ where
             // 過負荷になっていたら、long_queue_policy に応じて挙動を変える
             if let Err(e) = result {
                 match &self.long_queue_policy {
-                    LongQueuePolicy::RefuseNewRequests => {}
+                    LongQueuePolicy::RefuseNewRequests { .. } => {}
                     LongQueuePolicy::Stop => return Err(e),
                     LongQueuePolicy::Drop { .. } => {
                         // 確率 ratio で drop する
-                        if self.dropper.as_mut().unwrap().will_drop() {
+                        if self.dropper.will_drop() {
                             let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
                             info!(
                                 self.logger,
@@ -173,20 +173,23 @@ where
         }
         if let (Err(e), false) = (result, prioritized) {
             match &self.long_queue_policy {
-                LongQueuePolicy::RefuseNewRequests => {
-                    let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
-                    info!(
-                        self.logger, "Request refused: {:?}",
-                        command;
-                        "queue_len" => self.queue.len(),
-                        "from_busy (sec)" => elapsed,
-                    );
-                    self.metrics.dequeued_commands.increment(&command);
-                    let result = self.handle_command_with_error(
-                        command,
-                        ErrorKind::RequestRefused.cause(e).into(),
-                    );
-                    return Ok(result);
+                LongQueuePolicy::RefuseNewRequests { .. } => {
+                    // 確率 ratio で refuse する
+                    if self.dropper.will_drop() {
+                        let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
+                        info!(
+                            self.logger, "Request refused: {:?}",
+                            command;
+                            "queue_len" => self.queue.len(),
+                            "from_busy (sec)" => elapsed,
+                        );
+                        self.metrics.dequeued_commands.increment(&command);
+                        let result = self.handle_command_with_error(
+                            command,
+                            ErrorKind::RequestRefused.cause(e).into(),
+                        );
+                        return Ok(result);
+                    }
                 }
                 LongQueuePolicy::Stop => return Err(e),
                 LongQueuePolicy::Drop { .. } => {}
