@@ -142,7 +142,7 @@ impl<'a> DeviceRequest<'a> {
     ///
     /// 停止は重要な操作であり、実行は`Device`インスタンスの保持者に制限したいので、
     /// このメソッドは`crate`のみを公開範囲とする.
-    pub(crate) fn stop(&self) {
+    pub fn stop(&self) {
         let deadline = self.deadline.unwrap_or_default();
         let command = command::StopDevice::new(deadline);
         self.send_command(Command::Stop(command));
