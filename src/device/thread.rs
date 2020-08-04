@@ -110,12 +110,12 @@ where
             if let Err(e) = result {
                 match &self.long_queue_policy {
                     LongQueuePolicy::RefuseNewRequests { .. } => {}
-                    LongQueuePolicy::Stop => return Err(e),
+                    LongQueuePolicy::Stop => return track!(Err(e)),
                     LongQueuePolicy::Drop { .. } => {
                         // 確率 ratio で drop する
                         if self.dropper.will_drop() {
                             let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
-                            info!(
+                            warn!(
                                 self.logger,
                                 "Request dropped: {:?}",
                                 command;
@@ -151,11 +151,11 @@ where
     fn push_to_queue(&mut self, command: Command) -> Result<bool> {
         let result = track!(self.check_overload());
         let prioritized = command.prioritized();
-        if let Err(e) = self.check_queue_limit() {
+        if let Err(e) = track!(self.check_queue_limit()) {
             // queue length の hard limit を突破しているので、prioritized かどうかに関係なくエラーを返す。
             // 常にリクエストを拒否すれば問題ない。
             let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
-            info!(
+            error!(
                 self.logger, "Request refused (hard limit): {:?}",
                 command;
                 "queue_len" => self.queue.len(),
@@ -173,7 +173,7 @@ where
                     // 確率 ratio で refuse する
                     if self.dropper.will_drop() {
                         let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
-                        info!(
+                        warn!(
                             self.logger, "Request refused: {:?}",
                             command;
                             "queue_len" => self.queue.len(),
@@ -187,7 +187,7 @@ where
                         return Ok(result);
                     }
                 }
-                LongQueuePolicy::Stop => return Err(e),
+                LongQueuePolicy::Stop => return track!(Err(e)),
                 LongQueuePolicy::Drop { .. } => {}
             }
         }
@@ -291,14 +291,14 @@ where
     // この関数自身は常に成功するため、handle_command と違い bool を返す。
     fn handle_command_with_error(&mut self, command: Command, error: Error) -> bool {
         match command {
-            Command::Get(c) => c.reply(Err(error)),
-            Command::Head(c) => c.reply(Err(error)),
-            Command::List(c) => c.reply(Err(error)),
-            Command::ListRange(c) => c.reply(Err(error)),
-            Command::Put(c) => c.reply(Err(error)),
-            Command::Delete(c) => c.reply(Err(error)),
-            Command::DeleteRange(c) => c.reply(Err(error)),
-            Command::UsageRange(c) => c.reply(Err(error)),
+            Command::Get(c) => c.reply(track!(Err(error))),
+            Command::Head(c) => c.reply(track!(Err(error))),
+            Command::List(c) => c.reply(track!(Err(error))),
+            Command::ListRange(c) => c.reply(track!(Err(error))),
+            Command::Put(c) => c.reply(track!(Err(error))),
+            Command::Delete(c) => c.reply(track!(Err(error))),
+            Command::DeleteRange(c) => c.reply(track!(Err(error))),
+            Command::UsageRange(c) => c.reply(track!(Err(error))),
             Command::Stop(_) => {
                 // ここに来た場合だけ false を返し、残りのパスは全て true を返す。
                 return false;
