@@ -33,3 +33,15 @@ impl Default for LongQueuePolicy {
         LongQueuePolicy::RefuseNewRequests { ratio: 1.0 }
     }
 }
+
+impl LongQueuePolicy {
+    /// 過負荷時にリクエストが実行されない確率を返す。
+    /// 「実行されない」は、「拒否される」あるいは「ドロップされる」のいずれかを意味する。
+    pub fn ratio(&self) -> f64 {
+        match *self {
+            LongQueuePolicy::RefuseNewRequests { ratio } => ratio,
+            LongQueuePolicy::Stop => 0.0,
+            LongQueuePolicy::Drop { ratio } => ratio,
+        }
+    }
+}

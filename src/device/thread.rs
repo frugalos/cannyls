@@ -66,11 +66,7 @@ where
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
                 // LongQueuePolicy が RefuseNewRequests か Drop だったら、この後 run_once で使うため、dropper を作っておく。
                 // Stop の場合も実装を簡単にするためにプレイスホルダーの dropper を作る。
-                let ratio = match builder.long_queue_policy {
-                    LongQueuePolicy::RefuseNewRequests { ratio } => ratio,
-                    LongQueuePolicy::Stop => 0.0,
-                    LongQueuePolicy::Drop { ratio } => ratio,
-                };
+                let ratio = builder.long_queue_policy.ratio();
                 let dropper = Box::new(ProbabilisticDropper::new(builder.logger.clone(), ratio))
                     as Box<dyn Dropper>;
                 let mut device = DeviceThread {
