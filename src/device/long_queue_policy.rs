@@ -1,6 +1,6 @@
 /// デバイスのキューが長い場合にどうするか
 /// default は RefuseNewRequests
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LongQueuePolicy {
     /// 一定の割合で新しいリクエストを拒否する
     ///
