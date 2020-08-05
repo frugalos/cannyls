@@ -30,7 +30,7 @@ pub enum LongQueuePolicy {
 
 impl Default for LongQueuePolicy {
     fn default() -> Self {
-        LongQueuePolicy::RefuseNewRequests { ratio: 1.0 }
+        LongQueuePolicy::Stop
     }
 }
 
