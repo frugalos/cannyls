@@ -105,6 +105,7 @@ where
             return self.push_to_queue(command);
         }
         if let Some(command) = self.queue.pop() {
+            self.metrics.dequeued_commands.increment(&command);
             let result = track!(self.check_overload());
             // 過負荷になっていたら、long_queue_policy に応じて挙動を変える
             if let Err(e) = result {
@@ -122,7 +123,6 @@ where
                                 "queue_len" => self.queue.len(),
                                 "from_busy (sec)" => elapsed,
                             );
-                            self.metrics.dequeued_commands.increment(&command);
                             let result = self.handle_command_with_error(
                                 command,
                                 ErrorKind::RequestDropped.cause(e).into(),
@@ -132,7 +132,6 @@ where
                     }
                 }
             }
-            self.metrics.dequeued_commands.increment(&command);
             return track!(self.handle_command(command));
         }
 
@@ -187,7 +186,10 @@ where
                         return Ok(result);
                     }
                 }
-                LongQueuePolicy::Stop => return track!(Err(e)),
+                LongQueuePolicy::Stop => {
+                    self.metrics.dequeued_commands.increment(&command);
+                    return track!(Err(e));
+                }
                 LongQueuePolicy::Drop { .. } => {}
             }
         }
