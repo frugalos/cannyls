@@ -292,6 +292,7 @@ where
     // command に対し、常に指定されたエラーを返答する。
     // この関数自身は常に成功するため、handle_command と違い bool を返す。
     fn handle_command_with_error(&mut self, command: Command, error: Error) -> bool {
+        self.metrics.failed_commands.increment(&command);
         match command {
             Command::Get(c) => c.reply(track!(Err(error))),
             Command::Head(c) => c.reply(track!(Err(error))),
