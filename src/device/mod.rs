@@ -562,7 +562,7 @@ mod tests {
                 .wait_for_running()
                 .put(id(1234), embedded_data(b"hoge")),
         );
-        assert!(result.is_ok());
+        // 新規に書かれたので true
         assert!(result.unwrap(), true);
         // 2 回目は busy という理由で失敗する
         let result = execute(
@@ -573,6 +573,17 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(*result.unwrap_err().kind(), ErrorKind::RequestRefused);
+
+        // prioritized なリクエストはそのまま成功する
+        let result = execute(
+            handle
+                .request()
+                .wait_for_running()
+                .prioritized()
+                .put(id(1234), embedded_data(b"hoge")),
+        );
+        // 上書きされたので false
+        assert_eq!(result.unwrap(), false);
 
         Ok(())
     }
@@ -611,10 +622,7 @@ mod tests {
             .busy_threshold(0)
             .max_keep_busy_duration(Duration::from_secs(0))
             .long_queue_policy(LongQueuePolicy::Drop { ratio: 1.0 })
-            .spawn(|| {
-                std::thread::sleep(Duration::from_secs(1));
-                Ok(storage)
-            });
+            .spawn(|| Ok(storage));
 
         let handle = device.handle();
         // リクエストが処理される時には (キュー長) > 0 となっているため drop される
@@ -625,6 +633,16 @@ mod tests {
                 .put(id(1234), embedded_data(b"hoge")),
         );
         assert_eq!(*result.unwrap_err().kind(), ErrorKind::RequestDropped);
+
+        // prioritized なリクエストはそのまま成功する
+        let result = execute(
+            handle
+                .request()
+                .wait_for_running()
+                .prioritized()
+                .put(id(1234), embedded_data(b"hoge")),
+        );
+        assert_eq!(result.unwrap(), true);
 
         Ok(())
     }

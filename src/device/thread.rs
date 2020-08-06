@@ -107,8 +107,10 @@ where
         if let Some(command) = self.queue.pop() {
             self.metrics.dequeued_commands.increment(&command);
             let result = track!(self.check_overload());
+            let prioritized = command.prioritized();
             // 過負荷になっていたら、long_queue_policy に応じて挙動を変える
-            if let Err(e) = result {
+            // ただし、prioritized なリクエストの場合は過負荷でも drop せずに処理をする
+            if let (Err(e), false) = (result, prioritized) {
                 match &self.long_queue_policy {
                     LongQueuePolicy::RefuseNewRequests { .. } => {}
                     LongQueuePolicy::Stop => return track!(Err(e)),
