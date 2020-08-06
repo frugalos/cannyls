@@ -264,7 +264,9 @@ mod tests {
     use super::*;
     use lump::{LumpData, LumpId};
     use nvm::{MemoryNvm, SharedMemoryNvm};
+    use std::time::Duration;
     use storage::StorageBuilder;
+    use ErrorKind;
 
     #[test]
     fn device_works() -> TestResult {
@@ -538,6 +540,91 @@ mod tests {
 
         device.stop(Deadline::Immediate); // 管理スレッドの停止を指示
         track!(execute(device))?; // 停止完了を待機
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_long_queue_policy_refuse_request_works() -> TestResult {
+        let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+        let storage = track!(Storage::create(nvm))?;
+        let device = DeviceBuilder::new()
+            .busy_threshold(0)
+            .max_keep_busy_duration(Duration::from_secs(0))
+            .long_queue_policy(LongQueuePolicy::RefuseNewRequests { ratio: 1.0 })
+            .spawn(|| Ok(storage));
+
+        let handle = device.handle();
+        // 1 回目は成功する
+        let result = execute(
+            handle
+                .request()
+                .wait_for_running()
+                .put(id(1234), embedded_data(b"hoge")),
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap(), true);
+        // 2 回目は busy という理由で失敗する
+        let result = execute(
+            handle
+                .request()
+                .wait_for_running()
+                .put(id(1234), embedded_data(b"hoge")),
+        );
+        assert!(result.is_err());
+        assert_eq!(*result.unwrap_err().kind(), ErrorKind::RequestRefused);
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_long_queue_policy_stop_works() -> TestResult {
+        let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+        let storage = track!(Storage::create(nvm))?;
+        let device = DeviceBuilder::new()
+            .busy_threshold(0)
+            .max_keep_busy_duration(Duration::from_secs(0))
+            .long_queue_policy(LongQueuePolicy::Stop)
+            .spawn(|| Ok(storage));
+
+        let handle = device.handle();
+        // リクエストが処理される時には (キュー長) > 0 となってデバイスが落ちているため失敗する
+        let result = execute(
+            handle
+                .request()
+                .wait_for_running()
+                .put(id(1234), embedded_data(b"hoge")),
+        );
+        assert_eq!(*result.unwrap_err().kind(), ErrorKind::DeviceTerminated);
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_long_queue_policy_drop_works() -> TestResult {
+        // TODO: 本当は キューに積む -> 処理される前にもう一度キューに積む -> 最初のリクエストが drop される -> 残りが処理される
+        // というテストをやりたいのだが、面倒である。
+        // ここのテストでも無いよりはマシ。
+        let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+        let storage = track!(Storage::create(nvm))?;
+        let device = DeviceBuilder::new()
+            .busy_threshold(0)
+            .max_keep_busy_duration(Duration::from_secs(0))
+            .long_queue_policy(LongQueuePolicy::Drop { ratio: 1.0 })
+            .spawn(|| {
+                std::thread::sleep(Duration::from_secs(1));
+                Ok(storage)
+            });
+
+        let handle = device.handle();
+        // リクエストが処理される時には (キュー長) > 0 となっているため drop される
+        let result = execute(
+            handle
+                .request()
+                .wait_for_running()
+                .put(id(1234), embedded_data(b"hoge")),
+        );
+        assert_eq!(*result.unwrap_err().kind(), ErrorKind::RequestDropped);
 
         Ok(())
     }
