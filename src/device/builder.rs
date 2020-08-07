@@ -1,6 +1,7 @@
 use prometrics::metrics::MetricBuilder;
 use std::time::Duration;
 
+use super::long_queue_policy::LongQueuePolicy;
 use super::thread::DeviceThread;
 use super::{Device, DeviceHandle};
 use nvm::NonVolatileMemory;
@@ -17,6 +18,7 @@ pub struct DeviceBuilder {
     pub(crate) max_keep_busy_duration: Duration,
     pub(crate) busy_threshold: usize,
     pub(crate) logger: Logger,
+    pub(crate) long_queue_policy: LongQueuePolicy,
 }
 impl DeviceBuilder {
     /// デフォルト設定で`DeviceBuilder`インスタンスを生成する.
@@ -28,6 +30,7 @@ impl DeviceBuilder {
             max_keep_busy_duration: Duration::from_secs(600),
             busy_threshold: 1_000,
             logger: Logger::root(Discard, o!()),
+            long_queue_policy: LongQueuePolicy::default(),
         }
     }
 
@@ -96,6 +99,12 @@ impl DeviceBuilder {
     /// デバイススレッド用の logger を登録する
     pub fn logger(&mut self, logger: Logger) -> &mut Self {
         self.logger = logger;
+        self
+    }
+
+    /// LongQueuePolicy を登録する
+    pub fn long_queue_policy(&mut self, long_queue_policy: LongQueuePolicy) -> &mut Self {
+        self.long_queue_policy = long_queue_policy;
         self
     }
 

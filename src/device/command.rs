@@ -39,6 +39,19 @@ impl Command {
             Command::Stop(ref c) => c.deadline,
         }
     }
+    pub fn prioritized(&self) -> bool {
+        match *self {
+            Command::Put(ref c) => c.prioritized,
+            Command::Get(ref c) => c.prioritized,
+            Command::Head(ref c) => c.prioritized,
+            Command::Delete(ref c) => c.prioritized,
+            Command::DeleteRange(ref c) => c.prioritized,
+            Command::List(ref c) => c.prioritized,
+            Command::ListRange(ref c) => c.prioritized,
+            Command::UsageRange(ref c) => c.prioritized,
+            Command::Stop(ref c) => c.prioritized,
+        }
+    }
     pub fn failed(self, error: Error) {
         match self {
             Command::Put(c) => c.reply.send(Err(error)),
@@ -90,6 +103,7 @@ pub struct PutLump {
     lump_id: LumpId,
     lump_data: LumpData,
     deadline: Deadline,
+    prioritized: bool,
     journal_sync: bool,
     reply: AsyncReply<bool>,
 }
@@ -99,6 +113,7 @@ impl PutLump {
         lump_id: LumpId,
         lump_data: LumpData,
         deadline: Deadline,
+        prioritized: bool,
         journal_sync: bool,
     ) -> (Self, AsyncResult<bool>) {
         let (reply, result) = AsyncResult::new();
@@ -106,6 +121,7 @@ impl PutLump {
             lump_id,
             lump_data,
             deadline,
+            prioritized,
             journal_sync,
             reply,
         };
@@ -130,15 +146,21 @@ impl PutLump {
 pub struct GetLump {
     lump_id: LumpId,
     deadline: Deadline,
+    prioritized: bool,
     reply: AsyncReply<Option<LumpData>>,
 }
 impl GetLump {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(lump_id: LumpId, deadline: Deadline) -> (Self, AsyncResult<Option<LumpData>>) {
+    pub fn new(
+        lump_id: LumpId,
+        deadline: Deadline,
+        prioritized: bool,
+    ) -> (Self, AsyncResult<Option<LumpData>>) {
         let (reply, result) = AsyncResult::new();
         let command = GetLump {
             lump_id,
             deadline,
+            prioritized,
             reply,
         };
         (command, result)
@@ -155,15 +177,21 @@ impl GetLump {
 pub struct HeadLump {
     lump_id: LumpId,
     deadline: Deadline,
+    prioritized: bool,
     reply: AsyncReply<Option<LumpHeader>>,
 }
 impl HeadLump {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(lump_id: LumpId, deadline: Deadline) -> (Self, AsyncResult<Option<LumpHeader>>) {
+    pub fn new(
+        lump_id: LumpId,
+        deadline: Deadline,
+        prioritized: bool,
+    ) -> (Self, AsyncResult<Option<LumpHeader>>) {
         let (reply, result) = AsyncResult::new();
         let command = HeadLump {
             lump_id,
             deadline,
+            prioritized,
             reply,
         };
         (command, result)
@@ -180,6 +208,7 @@ impl HeadLump {
 pub struct DeleteLump {
     lump_id: LumpId,
     deadline: Deadline,
+    prioritized: bool,
     journal_sync: bool,
     reply: AsyncReply<bool>,
 }
@@ -188,12 +217,14 @@ impl DeleteLump {
     pub fn new(
         lump_id: LumpId,
         deadline: Deadline,
+        prioritized: bool,
         journal_sync: bool,
     ) -> (Self, AsyncResult<bool>) {
         let (reply, result) = AsyncResult::new();
         let command = DeleteLump {
             lump_id,
             deadline,
+            prioritized,
             journal_sync,
             reply,
         };
@@ -214,6 +245,7 @@ impl DeleteLump {
 pub struct DeleteLumpRange {
     range: Range<LumpId>,
     deadline: Deadline,
+    prioritized: bool,
     journal_sync: bool,
     reply: AsyncReply<Vec<LumpId>>,
 }
@@ -222,12 +254,14 @@ impl DeleteLumpRange {
     pub fn new(
         range: Range<LumpId>,
         deadline: Deadline,
+        prioritized: bool,
         journal_sync: bool,
     ) -> (Self, AsyncResult<Vec<LumpId>>) {
         let (reply, result) = AsyncResult::new();
         let command = DeleteLumpRange {
             range,
             deadline,
+            prioritized,
             journal_sync,
             reply,
         };
@@ -247,13 +281,18 @@ impl DeleteLumpRange {
 #[derive(Debug)]
 pub struct ListLump {
     deadline: Deadline,
+    prioritized: bool,
     reply: AsyncReply<Vec<LumpId>>,
 }
 impl ListLump {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(deadline: Deadline) -> (Self, AsyncResult<Vec<LumpId>>) {
+    pub fn new(deadline: Deadline, prioritized: bool) -> (Self, AsyncResult<Vec<LumpId>>) {
         let (reply, result) = AsyncResult::new();
-        let command = ListLump { deadline, reply };
+        let command = ListLump {
+            deadline,
+            prioritized,
+            reply,
+        };
         (command, result)
     }
     pub fn reply(self, result: Result<Vec<LumpId>>) {
@@ -265,15 +304,21 @@ impl ListLump {
 pub struct ListLumpRange {
     range: Range<LumpId>,
     deadline: Deadline,
+    prioritized: bool,
     reply: AsyncReply<Vec<LumpId>>,
 }
 impl ListLumpRange {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(range: Range<LumpId>, deadline: Deadline) -> (Self, AsyncResult<Vec<LumpId>>) {
+    pub fn new(
+        range: Range<LumpId>,
+        deadline: Deadline,
+        prioritized: bool,
+    ) -> (Self, AsyncResult<Vec<LumpId>>) {
         let (reply, result) = AsyncResult::new();
         let command = ListLumpRange {
             range,
             deadline,
+            prioritized,
             reply,
         };
         (command, result)
@@ -290,15 +335,21 @@ impl ListLumpRange {
 pub struct UsageLumpRange {
     range: Range<LumpId>,
     deadline: Deadline,
+    prioritized: bool,
     reply: AsyncReply<StorageUsage>,
 }
 impl UsageLumpRange {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(range: Range<LumpId>, deadline: Deadline) -> (Self, AsyncResult<StorageUsage>) {
+    pub fn new(
+        range: Range<LumpId>,
+        deadline: Deadline,
+        prioritized: bool,
+    ) -> (Self, AsyncResult<StorageUsage>) {
         let (reply, result) = AsyncResult::new();
         let command = UsageLumpRange {
             range,
             deadline,
+            prioritized,
             reply,
         };
         (command, result)
@@ -314,9 +365,13 @@ impl UsageLumpRange {
 #[derive(Debug)]
 pub struct StopDevice {
     deadline: Deadline,
+    prioritized: bool,
 }
 impl StopDevice {
-    pub fn new(deadline: Deadline) -> Self {
-        StopDevice { deadline }
+    pub fn new(deadline: Deadline, prioritized: bool) -> Self {
+        StopDevice {
+            deadline,
+            prioritized,
+        }
     }
 }

@@ -1,6 +1,7 @@
 use fibers::sync::oneshot;
 use futures::{Future, Poll};
 use slog::Logger;
+use std::fmt::Debug;
 use std::sync::mpsc as std_mpsc;
 use std::sync::mpsc::{RecvTimeoutError, SendError};
 use std::sync::Arc;
@@ -9,6 +10,8 @@ use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
 
 use device::command::{Command, CommandReceiver, CommandSender};
+use device::long_queue_policy::LongQueuePolicy;
+use device::probabilistic::{Dropper, ProbabilisticDropper};
 use device::queue::DeadlineQueue;
 use device::{DeviceBuilder, DeviceStatus};
 use metrics::DeviceMetrics;
@@ -33,6 +36,8 @@ where
     command_tx: CommandSender,
     command_rx: CommandReceiver,
     logger: Logger,
+    long_queue_policy: LongQueuePolicy,
+    dropper: Box<dyn Dropper>,
 }
 impl<N> DeviceThread<N>
 where
@@ -59,6 +64,11 @@ where
             let result = track!(init_storage()).and_then(|storage| {
                 metrics.storage = Some(storage.metrics().clone());
                 metrics.status.set(f64::from(DeviceStatus::Running as u8));
+                // LongQueuePolicy が RefuseNewRequests か Drop だったら、この後 run_once で使うため、dropper を作っておく。
+                // Stop の場合も実装を簡単にするためにプレイスホルダーの dropper を作る。
+                let ratio = builder.long_queue_policy.ratio();
+                let dropper = Box::new(ProbabilisticDropper::new(builder.logger.clone(), ratio))
+                    as Box<dyn Dropper>;
                 let mut device = DeviceThread {
                     metrics: metrics.clone(),
                     queue: DeadlineQueue::new(),
@@ -71,6 +81,8 @@ where
                     command_tx,
                     command_rx,
                     logger: builder.logger,
+                    long_queue_policy: builder.long_queue_policy,
+                    dropper,
                 };
                 loop {
                     match track!(device.run_once()) {
@@ -90,28 +102,101 @@ where
 
     fn run_once(&mut self) -> Result<bool> {
         if let Ok(command) = self.command_rx.try_recv() {
-            track!(self.check_queue_limit())?;
-            self.queue.push(command);
-            Ok(true)
-        } else if let Some(command) = self.queue.pop() {
-            track!(self.check_overload())?;
+            return self.push_to_queue(command);
+        }
+        if let Some(command) = self.queue.pop() {
             self.metrics.dequeued_commands.increment(&command);
-            track!(self.handle_command(command))
-        } else {
-            match self.command_rx.recv_timeout(self.idle_threshold) {
-                Err(RecvTimeoutError::Disconnected) => unreachable!(),
-                Err(RecvTimeoutError::Timeout) => {
-                    self.metrics.side_jobs.increment();
-                    track!(self.storage.run_side_job_once())?;
-                    Ok(true)
-                }
-                Ok(command) => {
-                    track!(self.check_queue_limit())?;
-                    self.queue.push(command);
-                    Ok(true)
+            let result = track!(self.check_overload());
+            let prioritized = command.prioritized();
+            // 過負荷になっていたら、long_queue_policy に応じて挙動を変える
+            // ただし、prioritized なリクエストの場合は過負荷でも drop せずに処理をする
+            if let (Err(e), false) = (result, prioritized) {
+                match &self.long_queue_policy {
+                    LongQueuePolicy::RefuseNewRequests { .. } => {}
+                    LongQueuePolicy::Stop => return track!(Err(e)),
+                    LongQueuePolicy::Drop { .. } => {
+                        // 確率 ratio で drop する
+                        if self.dropper.will_drop() {
+                            let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
+                            warn!(
+                                self.logger,
+                                "Request dropped: {:?}",
+                                command;
+                                "queue_len" => self.queue.len(),
+                                "from_busy (sec)" => elapsed,
+                            );
+                            let result = self.handle_command_with_error(
+                                command,
+                                ErrorKind::RequestDropped.cause(e).into(),
+                            );
+                            return Ok(result);
+                        }
+                    }
                 }
             }
+            return track!(self.handle_command(command));
         }
+
+        match self.command_rx.recv_timeout(self.idle_threshold) {
+            Err(RecvTimeoutError::Disconnected) => unreachable!(),
+            Err(RecvTimeoutError::Timeout) => {
+                self.metrics.side_jobs.increment();
+                track!(self.storage.run_side_job_once())?;
+                Ok(true)
+            }
+            Ok(command) => self.push_to_queue(command),
+        }
+    }
+
+    /// ここでも command の処理をせざるを得ない都合上、終了しないかどうかの bool 値を返す。
+    fn push_to_queue(&mut self, command: Command) -> Result<bool> {
+        let result = track!(self.check_overload());
+        let prioritized = command.prioritized();
+        if let Err(e) = track!(self.check_queue_limit()) {
+            // queue length の hard limit を突破しているので、prioritized かどうかに関係なくエラーを返す。
+            // 常にリクエストを拒否すれば問題ない。
+            let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
+            error!(
+                self.logger, "Request refused (hard limit): {:?}",
+                command;
+                "queue_len" => self.queue.len(),
+                "queue_len_hard_limit" => self.max_queue_len,
+                "from_busy (sec)" => elapsed,
+            );
+            self.metrics.dequeued_commands.increment(&command);
+            let result =
+                self.handle_command_with_error(command, ErrorKind::RequestRefused.cause(e).into());
+            return Ok(result);
+        }
+        if let (Err(e), false) = (result, prioritized) {
+            match &self.long_queue_policy {
+                LongQueuePolicy::RefuseNewRequests { .. } => {
+                    // 確率 ratio で refuse する
+                    if self.dropper.will_drop() {
+                        let elapsed = self.start_busy_time.map(|t| t.elapsed().as_secs());
+                        warn!(
+                            self.logger, "Request refused: {:?}",
+                            command;
+                            "queue_len" => self.queue.len(),
+                            "from_busy (sec)" => elapsed,
+                        );
+                        self.metrics.dequeued_commands.increment(&command);
+                        let result = self.handle_command_with_error(
+                            command,
+                            ErrorKind::RequestRefused.cause(e).into(),
+                        );
+                        return Ok(result);
+                    }
+                }
+                LongQueuePolicy::Stop => {
+                    self.metrics.dequeued_commands.increment(&command);
+                    return track!(Err(e));
+                }
+                LongQueuePolicy::Drop { .. } => {}
+            }
+        }
+        self.queue.push(command);
+        Ok(true)
     }
 
     fn handle_command(&mut self, command: Command) -> Result<bool> {
@@ -204,6 +289,27 @@ where
             }
             Command::Stop(_) => Ok(false),
         }
+    }
+
+    // command に対し、常に指定されたエラーを返答する。
+    // この関数自身は常に成功するため、handle_command と違い bool を返す。
+    fn handle_command_with_error(&mut self, command: Command, error: Error) -> bool {
+        self.metrics.failed_commands.increment(&command);
+        match command {
+            Command::Get(c) => c.reply(track!(Err(error))),
+            Command::Head(c) => c.reply(track!(Err(error))),
+            Command::List(c) => c.reply(track!(Err(error))),
+            Command::ListRange(c) => c.reply(track!(Err(error))),
+            Command::Put(c) => c.reply(track!(Err(error))),
+            Command::Delete(c) => c.reply(track!(Err(error))),
+            Command::DeleteRange(c) => c.reply(track!(Err(error))),
+            Command::UsageRange(c) => c.reply(track!(Err(error))),
+            Command::Stop(_) => {
+                // ここに来た場合だけ false を返し、残りのパスは全て true を返す。
+                return false;
+            }
+        }
+        true
     }
 
     fn check_overload(&mut self) -> Result<()> {

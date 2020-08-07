@@ -25,6 +25,7 @@ pub struct DeviceRequest<'a> {
     max_queue_len: Option<usize>,
     wait_for_running: bool,
     enforce_journal_sync: bool,
+    prioritized: bool,
 }
 impl<'a> DeviceRequest<'a> {
     pub(crate) fn new(device: &'a DeviceThreadHandle) -> Self {
@@ -34,6 +35,7 @@ impl<'a> DeviceRequest<'a> {
             max_queue_len: None,
             wait_for_running: false,
             enforce_journal_sync: false,
+            prioritized: false,
         }
     }
 
@@ -53,8 +55,14 @@ impl<'a> DeviceRequest<'a> {
         lump_data: LumpData,
     ) -> impl Future<Item = bool, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
-        let (command, response) =
-            command::PutLump::new(lump_id, lump_data, deadline, self.enforce_journal_sync);
+        let prioritized = self.prioritized;
+        let (command, response) = command::PutLump::new(
+            lump_id,
+            lump_data,
+            deadline,
+            prioritized,
+            self.enforce_journal_sync,
+        );
         self.send_command(Command::Put(command));
         response
     }
@@ -62,7 +70,9 @@ impl<'a> DeviceRequest<'a> {
     /// Lumpを取得する.
     pub fn get(&self, lump_id: LumpId) -> impl Future<Item = Option<LumpData>, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
-        let (command, response) = command::GetLump::new(lump_id, deadline);
+        let prioritized = self.prioritized;
+
+        let (command, response) = command::GetLump::new(lump_id, deadline, prioritized);
         self.send_command(Command::Get(command));
         response
     }
@@ -70,7 +80,9 @@ impl<'a> DeviceRequest<'a> {
     /// Lumpのヘッダを取得する.
     pub fn head(&self, lump_id: LumpId) -> impl Future<Item = Option<LumpHeader>, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
-        let (command, response) = command::HeadLump::new(lump_id, deadline);
+        let prioritized = self.prioritized;
+
+        let (command, response) = command::HeadLump::new(lump_id, deadline, prioritized);
         self.send_command(Command::Head(command));
         response
     }
@@ -80,8 +92,10 @@ impl<'a> DeviceRequest<'a> {
     /// 指定されたlumpが存在した場合には`true`が、しなかった場合には`false`が、結果として返される.
     pub fn delete(&self, lump_id: LumpId) -> impl Future<Item = bool, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
+        let prioritized = self.prioritized;
+
         let (command, response) =
-            command::DeleteLump::new(lump_id, deadline, self.enforce_journal_sync);
+            command::DeleteLump::new(lump_id, deadline, prioritized, self.enforce_journal_sync);
         self.send_command(Command::Delete(command));
         response
     }
@@ -95,8 +109,10 @@ impl<'a> DeviceRequest<'a> {
         range: Range<LumpId>,
     ) -> impl Future<Item = Vec<LumpId>, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
+        let prioritized = self.prioritized;
+
         let (command, response) =
-            command::DeleteLumpRange::new(range, deadline, self.enforce_journal_sync);
+            command::DeleteLumpRange::new(range, deadline, prioritized, self.enforce_journal_sync);
         self.send_command(Command::DeleteRange(command));
         response
     }
@@ -109,7 +125,9 @@ impl<'a> DeviceRequest<'a> {
     /// このメソッドは呼び出す際には注意が必要.
     pub fn list(&self) -> impl Future<Item = Vec<LumpId>, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
-        let (command, response) = command::ListLump::new(deadline);
+        let prioritized = self.prioritized;
+
+        let (command, response) = command::ListLump::new(deadline, prioritized);
         self.send_command(Command::List(command));
         response
     }
@@ -121,7 +139,9 @@ impl<'a> DeviceRequest<'a> {
         range: Range<LumpId>,
     ) -> impl Future<Item = Vec<LumpId>, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
-        let (command, response) = command::ListLumpRange::new(range, deadline);
+        let prioritized = self.prioritized;
+
+        let (command, response) = command::ListLumpRange::new(range, deadline, prioritized);
         self.send_command(Command::ListRange(command));
         response
     }
@@ -133,7 +153,9 @@ impl<'a> DeviceRequest<'a> {
         range: Range<LumpId>,
     ) -> impl Future<Item = StorageUsage, Error = Error> {
         let deadline = self.deadline.unwrap_or_default();
-        let (command, response) = command::UsageLumpRange::new(range, deadline);
+        let prioritized = self.prioritized;
+
+        let (command, response) = command::UsageLumpRange::new(range, deadline, prioritized);
         self.send_command(Command::UsageRange(command));
         response
     }
@@ -144,7 +166,9 @@ impl<'a> DeviceRequest<'a> {
     /// このメソッドは`crate`のみを公開範囲とする.
     pub(crate) fn stop(&self) {
         let deadline = self.deadline.unwrap_or_default();
-        let command = command::StopDevice::new(deadline);
+        let prioritized = self.prioritized;
+
+        let command = command::StopDevice::new(deadline, prioritized);
         self.send_command(Command::Stop(command));
     }
 
@@ -190,6 +214,16 @@ impl<'a> DeviceRequest<'a> {
     /// リクエストはキューに追加され、デバイス起動後に順次処理される.
     pub fn wait_for_running(&mut self) -> &mut Self {
         self.wait_for_running = true;
+        self
+    }
+
+    /// リクエストを優先的に処理する。
+    ///
+    /// デフォルトでは、全てのリクエストは、過負荷時に無視される。
+    /// prioritized が呼び出されたリクエストは、
+    /// キューの長さが hard limit に達するまでは、たとえ過負荷であっても処理される。
+    pub fn prioritized(&mut self) -> &mut Self {
+        self.prioritized = true;
         self
     }
 
