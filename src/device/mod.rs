@@ -546,6 +546,7 @@ mod tests {
 
     #[test]
     fn device_long_queue_policy_refuse_request_works() -> TestResult {
+        // TODO: better testing
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(Storage::create(nvm))?;
         let device = DeviceBuilder::new()
@@ -555,7 +556,8 @@ mod tests {
             .spawn(|| Ok(storage));
 
         let handle = device.handle();
-        // 1 回目は成功する
+        // 1 回目は成功する。これは、拒否の判定タイミングがキューにリクエストを積む時で、その時初めて check_overload が呼ばれるため。
+        // check_overload の初回呼び出しは決してエラーを返さない。
         let result = execute(
             handle
                 .request()
