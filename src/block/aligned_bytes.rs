@@ -125,11 +125,9 @@ impl Clone for AlignedBytes {
 }
 
 fn alignment_offset(buf: &[u8], block_size: BlockSize) -> usize {
-    unsafe {
-        let ptr_usize: usize = std::mem::transmute(buf.as_ptr());
-        let aligned_ptr_usize = block_size.ceil_align(ptr_usize as u64) as usize;
-        aligned_ptr_usize - ptr_usize
-    }
+    let ptr_usize: usize = buf.as_ptr() as usize;
+    let aligned_ptr_usize = block_size.ceil_align(ptr_usize as u64) as usize;
+    aligned_ptr_usize - ptr_usize
 }
 
 #[cfg(test)]
