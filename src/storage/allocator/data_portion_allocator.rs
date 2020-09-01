@@ -66,7 +66,7 @@ impl DataPortionAllocator {
         portions.push(sentinel);
         // DataPortionの終端を用いて降順ソートを行う。
         // すなわち、ソート後は、先頭であればあるほどend()の値は大きい。
-        portions.sort_by(|a: &DataPortion, b: &DataPortion| b.end().cmp(&a.end()));
+        portions.sort_by_key(|&b| std::cmp::Reverse(b.end()));
 
         // 変数tailの意味は次の通り:
         // tail位置には値が書き込めない・書き込まれている、すなわち空いてはいない。
