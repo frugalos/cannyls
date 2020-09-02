@@ -591,6 +591,75 @@ mod tests {
     }
 
     #[test]
+    fn device_long_queue_policy_refuse_request_works_2() -> TestResult {
+        use std::sync::atomic::{AtomicU8, Ordering};
+
+        let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+        let storage = track!(Storage::create(nvm))?;
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let device = DeviceBuilder::new()
+            .busy_threshold(3)
+            .max_keep_busy_duration(Duration::from_secs(0))
+            .long_queue_policy(LongQueuePolicy::RefuseNewRequests { ratio: 1.0 })
+            .spawn(move || {
+                // キューにリクエストが積まれるのを待つ。
+                rx.recv().unwrap();
+                Ok(storage)
+            });
+
+        let handle = device.handle();
+        // 最初にキューに 5 個積む
+        // リクエストが処理される時には、最後の 1 個だけエラーになり、残りの 4 個は正しく処理される。
+        // キュー長の上限が 3 なのに 4 個分正しく処理されるのは、4個目がキューに積まれる直前はまだキュー長が 3 になったばかりであり、
+        // そのあと 4 個目がキューに積まれるときにようやくキュー長が 3 である時間の計測が始まるため。
+        // そのあと 5 個目がキューに積まれるときは、キュー長 3 だった時間が 0 秒以上あるのでキューから reject される。
+        // 処理される順番は不定であるため、成功の個数とエラーの個数を AtomicU8 でカウントし、あとで確かめる。
+        let mut join_handles = vec![];
+        let success = Arc::new(AtomicU8::new(0));
+        let failure = Arc::new(AtomicU8::new(0));
+        for _ in 0..5 {
+            let handle = handle.clone();
+            let success = success.clone();
+            let failure = failure.clone();
+            let join_handle = std::thread::spawn(move || {
+                let result = execute(
+                    handle
+                        .request()
+                        .wait_for_running()
+                        .put(id(1234), embedded_data(b"hoge")),
+                );
+                match result {
+                    Ok(_) => {
+                        success.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(e) => {
+                        // 失敗したのであれば refuse されたはず
+                        assert_eq!(*e.kind(), ErrorKind::RequestRefused);
+                        failure.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            });
+            join_handles.push(join_handle);
+        }
+        // TODO: ここで上のリクエストが送られてキューに積まれるのを待たないため、このコードにはタイミング問題が存在する。
+        // これを回避するためには、上の put でリクエストを送るときに non-blocking な方法で送り、
+        // 送られたのを確かめてから send する必要がある。
+        // 現状では確率的にタイミング問題が発生するため、その回避のために適当な sleep を挟む。
+        std::thread::sleep(Duration::from_millis(100));
+        tx.send(()).unwrap();
+
+        for join_handle in join_handles {
+            join_handle.join().unwrap();
+        }
+
+        // 成功 4 回、失敗 1 回
+        assert_eq!(success.load(Ordering::SeqCst), 4);
+        assert_eq!(failure.load(Ordering::SeqCst), 1);
+
+        Ok(())
+    }
+
+    #[test]
     fn device_long_queue_policy_stop_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(Storage::create(nvm))?;
@@ -645,6 +714,72 @@ mod tests {
                 .put(id(1234), embedded_data(b"hoge")),
         );
         assert_eq!(result.unwrap(), true);
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_long_queue_policy_drop_works_2() -> TestResult {
+        use std::sync::atomic::{AtomicU8, Ordering};
+
+        let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
+        let storage = track!(Storage::create(nvm))?;
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let device = DeviceBuilder::new()
+            .busy_threshold(3)
+            .max_keep_busy_duration(Duration::from_secs(0))
+            .long_queue_policy(LongQueuePolicy::Drop { ratio: 1.0 })
+            .spawn(move || {
+                // キューにリクエストが積まれるのを待つ。
+                rx.recv().unwrap();
+                Ok(storage)
+            });
+
+        let handle = device.handle();
+        // 最初にキューに 5 個積む
+        // リクエストが処理される時には、最初の 2 個だけエラーになり、残りの 3 個は正しく処理される。
+        // 処理される順番は不定であるため、成功の個数とエラーの個数を AtomicU8 でカウントし、あとで確かめる。
+        let mut join_handles = vec![];
+        let success = Arc::new(AtomicU8::new(0));
+        let failure = Arc::new(AtomicU8::new(0));
+        for _ in 0..5 {
+            let handle = handle.clone();
+            let success = success.clone();
+            let failure = failure.clone();
+            let join_handle = std::thread::spawn(move || {
+                let result = execute(
+                    handle
+                        .request()
+                        .wait_for_running()
+                        .put(id(1234), embedded_data(b"hoge")),
+                );
+                match result {
+                    Ok(_) => {
+                        success.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(e) => {
+                        // 失敗したのであれば drop されたはず
+                        assert_eq!(*e.kind(), ErrorKind::RequestDropped);
+                        failure.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            });
+            join_handles.push(join_handle);
+        }
+        // TODO: ここで上のリクエストが送られてキューに積まれるのを待たないため、このコードにはタイミング問題が存在する。
+        // これを回避するためには、上の put でリクエストを送るときに non-blocking な方法で送り、
+        // 送られたのを確かめてから send する必要がある。
+        // 現状では確率的にタイミング問題が発生するため、その回避のために適当な sleep を挟む。
+        std::thread::sleep(Duration::from_millis(100));
+        tx.send(()).unwrap();
+
+        for join_handle in join_handles {
+            join_handle.join().unwrap();
+        }
+
+        // 成功 3 回、失敗 2 回
+        assert_eq!(success.load(Ordering::SeqCst), 3);
+        assert_eq!(failure.load(Ordering::SeqCst), 2);
 
         Ok(())
     }
