@@ -54,6 +54,14 @@ pub struct JournalNvmBuffer<N: NonVolatileMemory> {
     // ジャーナル領域が発行した読み込み要求を、
     // 内部NVMのブロック境界に合うようにアライメントするために使用される。
     read_buf: AlignedBytes,
+
+    // バッファの安全なflushを行うかどうかを意味するフラグ
+    //
+    // trueの場合は、バッファの先頭から512バイト以降を書き出してsyncした後に、
+    // 先頭から512バイトをatomicに書き出す。
+    // 
+    // falseの場合は、バッファ全体をdiskに向けて単にflushする
+    safe_flush: bool,
 }
 impl<N: NonVolatileMemory> JournalNvmBuffer<N> {
     /// 新しい`JournalNvmBuffer`インスタンスを生成する.
@@ -65,7 +73,7 @@ impl<N: NonVolatileMemory> JournalNvmBuffer<N> {
     ///
     /// ただし、シーク時には、シーク地点を含まない次のブロック境界までのデータは
     /// 上書きされてしまうので注意が必要.
-    pub fn new(nvm: N) -> Self {
+    pub fn new(nvm: N, safe_flush: bool) -> Self {
         let block_size = nvm.block_size();
         JournalNvmBuffer {
             inner: nvm,
@@ -74,6 +82,7 @@ impl<N: NonVolatileMemory> JournalNvmBuffer<N> {
             write_buf_offset: 0,
             write_buf: AlignedBytes::new(0, block_size),
             read_buf: AlignedBytes::new(0, block_size),
+            safe_flush,
         }
     }
 
@@ -95,13 +104,60 @@ impl<N: NonVolatileMemory> JournalNvmBuffer<N> {
         }
     }
 
+    /*
+     * バッファの内容をdiskに書き出す。
+     *
+     * 関数名が表すように、flushを意図したものであってdiskへの同期までは考慮していない。
+     * ただし、safe_syncがtrueの場合は、書き出し順をコントロールするために、
+     * 内部的にパラメタ化されているNVMのsyncメソッドを呼び出すことになる。
+     * ただしその場合でも、実装の都合により、メモリバッファ全体がdiskへ永続化されるとは限らない。
+     */
     fn flush_write_buf(&mut self) -> Result<()> {
         if self.write_buf.is_empty() || !self.maybe_dirty {
             return Ok(());
         }
 
-        track_io!(self.inner.seek(SeekFrom::Start(self.write_buf_offset)))?;
-        track_io!(self.inner.write(&self.write_buf))?;
+        if self.safe_flush {
+            /*
+             * issue 27(https://github.com/frugalos/cannyls/issues/27)を考慮した
+             * 順序づいた書き込みを行う。
+             *
+             * ここで順序とは次を意味する
+             * 1. 書き込みバッファの512バイト以降を全て書き出す。
+             * 2. Diskへの同期命令を発行する。
+             * 3. 書き込みバッファの先頭512バイトを書き出す。
+             *
+             * 3.のステップで既存のEORを上書きするため、
+             * これを最後に行うことにより、DiskからEORが消えた状態になることを避ける。
+             *
+             * パフォーマンスに関する問題点:
+             *  a. Diskへの同期命令はミリセカンド単位でのブロックを生じる。
+             *  b. ステップ3でシークが生じるのでシーケンシャルwriteでなくなってしまう。
+             *
+             * 先頭512バイトについて:
+             *  先頭は512*nバイトであれば、DIRECT_IOとの兼ね合いとしては問題がない。
+             *  ただし、「多くのHDDについては」512バイト=セクタサイズであり
+             *  先頭部分の書き出しがatomicな書き出しになるという利点がある。
+             *  ただし用いているファイルシステムの実装によっては
+             *  実際には512バイトが分断されて書き出される可能性もあり、常にこの利点を享受できるとは限らない。
+             */
+            let buf: &[u8] = &self.write_buf;
+            assert!(buf.as_ptr() as usize % 512 == 0);
+            assert!(buf.len() % 512 == 0);
+            if buf.len() > 512 {
+                track_io!(self
+                    .inner
+                    .seek(SeekFrom::Start(self.write_buf_offset + 512)))?;
+                track_io!(self.inner.write(&buf[512..]))?;
+                track!(self.inner.sync())?;
+            }
+            track_io!(self.inner.seek(SeekFrom::Start(self.write_buf_offset)))?;
+            track_io!(self.inner.write(&buf[..512]))?;
+        } else {
+            track_io!(self.inner.seek(SeekFrom::Start(self.write_buf_offset)))?;
+            track_io!(self.inner.write(&self.write_buf))?;
+        }
+
         if self.write_buf.len() > self.block_size().as_u16() as usize {
             // このif節では、
             // バッファに末端のalignmentバイト分(= new_len)の情報を残す。
@@ -366,6 +422,6 @@ mod tests {
 
     fn new_buffer() -> JournalNvmBuffer<MemoryNvm> {
         let nvm = MemoryNvm::new(vec![0; 10 * 1024]);
-        JournalNvmBuffer::new(nvm)
+        JournalNvmBuffer::new(nvm, false)
     }
 }

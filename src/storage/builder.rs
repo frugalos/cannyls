@@ -107,6 +107,29 @@ impl StorageBuilder {
         self
     }
 
+    /// ジャーナルバッファをdiskにflushする際に、
+    /// atomicにdiskに永続化されるように安全な手順で書き出す。
+    ///
+    /// これにより、
+    /// ジャーナルバッファを書き出している途中でプロセスがクラッシュしても
+    /// 再起動後には書き出し直前の状態に戻ることができる。
+    pub fn journal_safe_flush(&mut self, safe_flush: bool) -> &mut Self {
+        self.journal.buffer_options.safe_flush = safe_flush;
+        self
+    }
+
+    /// enqueue時にGoToFrontでEndOfRecordsを上書きする必要がある際は、
+    /// 先に新しいレコードとEndOfRecordsを書き込んでから、
+    /// その後にGoToFrontを書き込むようにする。
+    ///
+    /// GoToFrontを書き込んでからジャーナル領域先頭にseekするという
+    /// 比較的長い処理をしている間にプロセスがクラッシュしても、
+    /// 再起動後には直前の状態の戻ることができる。
+    pub fn journal_safe_enqueue(&mut self, safe_enqueue: bool) -> &mut Self {
+        self.journal.buffer_options.safe_enqueue = safe_enqueue;
+        self
+    }
+
     /// メトリクス用の共通設定を登録する.
     ///
     /// デフォルト値は`MetricBuilder::new()`.
@@ -175,7 +198,7 @@ impl StorageBuilder {
             header.block_size.contains(nvm.block_size()),
             ErrorKind::InvalidInput
         );
-        let mut journal_options = self.journal.clone();
+        let mut journal_options = self.journal;
         journal_options.block_size = header.block_size;
 
         // UUIDをチェック

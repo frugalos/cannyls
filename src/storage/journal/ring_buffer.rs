@@ -2,7 +2,7 @@ use prometrics::metrics::MetricBuilder;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use super::record::{EMBEDDED_DATA_OFFSET, END_OF_RECORDS_SIZE};
-use super::{JournalEntry, JournalNvmBuffer, JournalRecord};
+use super::{JournalBufferOptions, JournalEntry, JournalNvmBuffer, JournalRecord};
 use lump::LumpId;
 use metrics::JournalQueueMetrics;
 use nvm::NonVolatileMemory;
@@ -34,6 +34,8 @@ pub struct JournalRingBuffer<N: NonVolatileMemory> {
     tail: u64,
 
     metrics: JournalQueueMetrics,
+
+    safe_enqueue: bool,
 }
 impl<N: NonVolatileMemory> JournalRingBuffer<N> {
     pub fn head(&self) -> u64 {
@@ -51,15 +53,21 @@ impl<N: NonVolatileMemory> JournalRingBuffer<N> {
     }
 
     /// `JournalRingBuffer`インスタンスを生成する.
-    pub fn new(nvm: N, head: u64, metric_builder: &MetricBuilder) -> Self {
+    pub fn new(
+        nvm: N,
+        head: u64,
+        options: JournalBufferOptions,
+        metric_builder: &MetricBuilder,
+    ) -> Self {
         let metrics = JournalQueueMetrics::new(metric_builder);
         metrics.capacity_bytes.set(nvm.capacity() as f64);
         JournalRingBuffer {
-            nvm: JournalNvmBuffer::new(nvm),
+            nvm: JournalNvmBuffer::new(nvm, options.safe_flush),
             unreleased_head: head,
             head,
             tail: head,
             metrics,
+            safe_enqueue: options.safe_enqueue,
         }
     }
 
@@ -108,10 +116,21 @@ impl<N: NonVolatileMemory> JournalRingBuffer<N> {
         track!(self.nvm.sync())
     }
 
+    pub fn enqueue<B: AsRef<[u8]>>(
+        &mut self,
+        record: &JournalRecord<B>,
+    ) -> Result<Option<(LumpId, JournalPortion)>> {
+        if self.safe_enqueue {
+            self.safe_enqueue(record)
+        } else {
+            self.fast_enqueue(record)
+        }
+    }
+
     /// レコードをジャーナルの末尾に追記する.
     ///
     /// レコードが`JournalRecord::Embed`だった場合には、データを埋め込んだ位置を結果として返す.
-    pub fn enqueue<B: AsRef<[u8]>>(
+    fn fast_enqueue<B: AsRef<[u8]>>(
         &mut self,
         record: &JournalRecord<B>,
     ) -> Result<Option<(LumpId, JournalPortion)>> {
@@ -146,6 +165,70 @@ impl<N: NonVolatileMemory> JournalRingBuffer<N> {
         track!(JournalRecord::EndOfRecords::<[_; 0]>.write_to(&mut self.nvm))?;
 
         // 5. 埋め込みPUTの場合には、インデックスに位置情報を返す
+        if let JournalRecord::Embed(ref lump_id, ref data) = *record {
+            let portion = JournalPortion {
+                start: Address::from_u64(prev_tail + EMBEDDED_DATA_OFFSET as u64).unwrap(),
+                len: data.as_ref().len() as u16,
+            };
+            Ok(Some((*lump_id, portion)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// レコードをジャーナルの末尾に、安全に、追記する.
+    ///
+    /// レコードが`JournalRecord::Embed`だった場合には、データを埋め込んだ位置を結果として返す.
+    fn safe_enqueue<B: AsRef<[u8]>>(
+        &mut self,
+        record: &JournalRecord<B>,
+    ) -> Result<Option<(LumpId, JournalPortion)>> {
+        // GoToFrontレコードを書き出す場所を覚えるための変数
+        let mut pos_for_gotofront = None;
+
+        // 1. 十分な空き領域が存在するかをチェック
+        track!(self.check_free_space(record))?;
+
+        // 2. リングバッファの終端チェック
+        if self.will_overflow(record) {
+            // tail位置からでは空きがないので、先頭に戻って再試行
+            // 後で先頭から復帰するために場所を覚えておく
+            pos_for_gotofront = Some(self.tail);
+
+            self.metrics
+                .consumed_bytes_at_running
+                .add_u64(self.nvm.capacity() - self.tail);
+
+            // 先頭に移動した上で
+            // 再度、十分な空き領域が存在するかをチェック
+            self.tail = 0;
+            debug_assert!(!self.will_overflow(record));
+            track!(self.check_free_space(record))?;
+        }
+
+        // 3. レコードを書き込む
+        let prev_tail = self.tail;
+        track_io!(self.nvm.seek(SeekFrom::Start(self.tail)))?;
+        track!(record.write_to(&mut self.nvm))?;
+        self.metrics.enqueued_records_at_running.increment(record);
+
+        // 4. 終端を示すレコードも書き込む
+        self.tail = self.nvm.position(); // 次回の追記開始位置を保存 (`EndOfRecords`の直前)
+        self.metrics
+            .consumed_bytes_at_running
+            .add_u64(self.tail - prev_tail);
+        track!(JournalRecord::EndOfRecords::<[_; 0]>.write_to(&mut self.nvm))?;
+
+        // 5. GoToFrontを書き込む必要があれば、一度末尾までジャンプして書き込んだ後に戻ってくる。
+        // GoToFrontの書き出しを先に行ってしまうと、EndOfRecordsが存在しない状態が永続化される可能性がある。
+        if let Some(pos_for_gotofront) = pos_for_gotofront {
+            track!(self.nvm.sync())?; // 新しいEndOfRecordsの書き込みを先に永続化する。
+            track_io!(self.nvm.seek(SeekFrom::Start(pos_for_gotofront)))?;
+            track!(JournalRecord::GoToFront::<[_; 0]>.write_to(&mut self.nvm))?; // 古いEndOfRecordsに上書き
+            track_io!(self.nvm.seek(SeekFrom::Start(self.tail)))?;
+        }
+
+        // 6. 埋め込みPUTの場合には、インデックスに位置情報を返す
         if let JournalRecord::Embed(ref lump_id, ref data) = *record {
             let portion = JournalPortion {
                 start: Address::from_u64(prev_tail + EMBEDDED_DATA_OFFSET as u64).unwrap(),
@@ -364,7 +447,7 @@ mod tests {
     #[test]
     fn append_and_read_records() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024]);
-        let mut ring = JournalRingBuffer::new(nvm, 0, &MetricBuilder::new());
+        let mut ring = JournalRingBuffer::new(nvm, 0, Default::default(), &MetricBuilder::new());
 
         let records = vec![
             record_put("000", 30, 5),
@@ -397,7 +480,7 @@ mod tests {
     #[test]
     fn read_embedded_data() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024]);
-        let mut ring = JournalRingBuffer::new(nvm, 0, &MetricBuilder::new());
+        let mut ring = JournalRingBuffer::new(nvm, 0, Default::default(), &MetricBuilder::new());
 
         track!(ring.enqueue(&record_put("000", 30, 5)))?;
         track!(ring.enqueue(&record_delete("111")))?;
@@ -415,7 +498,7 @@ mod tests {
     #[test]
     fn go_round_ring_buffer() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024]);
-        let mut ring = JournalRingBuffer::new(nvm, 512, &MetricBuilder::new());
+        let mut ring = JournalRingBuffer::new(nvm, 512, Default::default(), &MetricBuilder::new());
         assert_eq!(ring.head, 512);
         assert_eq!(ring.tail, 512);
 
@@ -433,7 +516,7 @@ mod tests {
     #[test]
     fn full() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024]);
-        let mut ring = JournalRingBuffer::new(nvm, 0, &MetricBuilder::new());
+        let mut ring = JournalRingBuffer::new(nvm, 0, Default::default(), &MetricBuilder::new());
 
         let record = record_put("000", 1, 2);
         while ring.tail <= 1024 - record.external_size() as u64 {
@@ -464,7 +547,7 @@ mod tests {
     #[test]
     fn too_large_record() {
         let nvm = MemoryNvm::new(vec![0; 1024]);
-        let mut ring = JournalRingBuffer::new(nvm, 0, &MetricBuilder::new());
+        let mut ring = JournalRingBuffer::new(nvm, 0, Default::default(), &MetricBuilder::new());
 
         let record = record_embed("000", &[0; 997]);
         assert_eq!(record.external_size(), 1020);

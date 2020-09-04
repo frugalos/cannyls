@@ -80,8 +80,12 @@ where
 
         let mut header_region = JournalHeaderRegion::new(header_nvm, block_size);
         let header = track!(header_region.read_header())?;
-        let ring_buffer =
-            JournalRingBuffer::new(ring_buffer_nvm, header.ring_buffer_head, metric_builder);
+        let ring_buffer = JournalRingBuffer::new(
+            ring_buffer_nvm,
+            header.ring_buffer_head,
+            options.buffer_options,
+            metric_builder,
+        );
 
         let metrics = JournalRegionMetrics::new(metric_builder, ring_buffer.metrics().clone());
         let mut journal = JournalRegion {
