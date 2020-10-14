@@ -4,10 +4,10 @@ use std::time::Duration;
 use super::long_queue_policy::LongQueuePolicy;
 use super::thread::DeviceThread;
 use super::{Device, DeviceHandle};
-use nvm::NonVolatileMemory;
+use crate::nvm::NonVolatileMemory;
 use slog::{Discard, Logger};
-use storage::Storage;
-use Result;
+use crate::storage::Storage;
+use crate::Result;
 
 /// `Device`のビルダ.
 #[derive(Debug, Clone)]

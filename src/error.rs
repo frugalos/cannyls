@@ -1,5 +1,4 @@
 use std::{self, str::FromStr};
-use trackable;
 use trackable::error::ErrorKindExt;
 
 /// crate固有のエラー型.

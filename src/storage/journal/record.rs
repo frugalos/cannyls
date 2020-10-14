@@ -3,10 +3,10 @@ use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
 use std::ops::Range;
 
-use lump::LumpId;
-use storage::portion::DataPortion;
-use storage::Address;
-use {ErrorKind, Result};
+use crate::lump::LumpId;
+use crate::storage::portion::DataPortion;
+use crate::storage::Address;
+use crate::{ErrorKind, Result};
 
 pub const TAG_SIZE: usize = 1;
 pub const CHECKSUM_SIZE: usize = 4;
@@ -198,9 +198,9 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use lump::LumpId;
-    use storage::portion::DataPortion;
-    use storage::Address;
+    use crate::lump::LumpId;
+    use crate::storage::portion::DataPortion;
+    use crate::storage::Address;
 
     #[test]
     fn read_write_works() -> TestResult {

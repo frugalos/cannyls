@@ -7,14 +7,14 @@ use super::options::JournalRegionOptions;
 use super::record::{JournalEntry, JournalRecord, EMBEDDED_DATA_OFFSET};
 use super::ring_buffer::JournalRingBuffer;
 use super::{JournalHeader, JournalHeaderRegion};
-use block::BlockSize;
-use lump::LumpId;
-use metrics::JournalRegionMetrics;
-use nvm::NonVolatileMemory;
-use storage::index::LumpIndex;
-use storage::portion::{DataPortion, JournalPortion, Portion};
-use storage::Address;
-use {ErrorKind, Result};
+use crate::block::BlockSize;
+use crate::lump::LumpId;
+use crate::metrics::JournalRegionMetrics;
+use crate::nvm::NonVolatileMemory;
+use crate::storage::index::LumpIndex;
+use crate::storage::portion::{DataPortion, JournalPortion, Portion};
+use crate::storage::Address;
+use crate::{ErrorKind, Result};
 
 // 一回の空き時間処理で実行するGC回数
 const GC_COUNT_IN_SIDE_JOB: usize = 64;

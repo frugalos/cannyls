@@ -1,10 +1,10 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, SeekFrom, Write};
 
-use Result;
+use crate::Result;
 
-use block::{AlignedBytes, BlockSize};
-use nvm::NonVolatileMemory;
+use crate::block::{AlignedBytes, BlockSize};
+use crate::nvm::NonVolatileMemory;
 
 /// ジャーナルのヘッダ.
 #[derive(Debug, PartialEq, Eq)]
@@ -88,7 +88,7 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use block::BlockSize;
+    use crate::block::BlockSize;
 
     #[test]
     fn it_works() -> TestResult {

@@ -2,10 +2,10 @@
 use std::collections::{btree_map, BTreeMap};
 use std::ops;
 
-use block::BlockSize;
-use lump::LumpId;
-use storage::portion::{DataPortion, Portion, PortionU64};
-use storage::StorageUsage;
+use crate::block::BlockSize;
+use crate::lump::LumpId;
+use crate::storage::portion::{DataPortion, Portion, PortionU64};
+use crate::storage::StorageUsage;
 
 /// Lump群の位置情報を保持するインデックス.
 ///

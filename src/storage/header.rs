@@ -4,12 +4,12 @@ use std::io::{Read, Write};
 use std::path::Path;
 use uuid::Uuid;
 
-use block::BlockSize;
-use nvm::NonVolatileMemory;
-use storage::{
+use crate::block::BlockSize;
+use crate::nvm::NonVolatileMemory;
+use crate::storage::{
     MAGIC_NUMBER, MAJOR_VERSION, MAX_DATA_REGION_SIZE, MAX_JOURNAL_REGION_SIZE, MINOR_VERSION,
 };
-use {ErrorKind, Result};
+use crate::{ErrorKind, Result};
 
 /// ヘッダを表現するのに必要なバイト数.
 const HEADER_SIZE: u16 =
@@ -195,7 +195,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use block::BlockSize;
+    use crate::block::BlockSize;
 
     #[test]
     fn it_works() -> TestResult {

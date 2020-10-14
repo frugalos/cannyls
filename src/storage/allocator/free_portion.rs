@@ -3,8 +3,8 @@
 use std::cmp;
 
 use super::U24;
-use storage::portion::DataPortion;
-use storage::Address;
+use crate::storage::portion::DataPortion;
+use crate::storage::Address;
 
 /// 空き(割当可能)領域を表現するための構造体.  
 /// 空き領域の開始位置と長さを保持しており、
@@ -122,7 +122,7 @@ impl Ord for EndBasedFreePortion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage::Address;
+    use crate::storage::Address;
 
     #[test]
     fn it_works() {

@@ -2,12 +2,12 @@ use byteorder::{BigEndian, ByteOrder};
 use prometrics::metrics::MetricBuilder;
 use std::io::{Read, SeekFrom, Write};
 
-use block::{AlignedBytes, BlockSize};
-use metrics::DataRegionMetrics;
-use nvm::NonVolatileMemory;
-use storage::allocator::DataPortionAllocator;
-use storage::portion::DataPortion;
-use {ErrorKind, Result};
+use crate::block::{AlignedBytes, BlockSize};
+use crate::metrics::DataRegionMetrics;
+use crate::nvm::NonVolatileMemory;
+use crate::storage::allocator::DataPortionAllocator;
+use crate::storage::portion::DataPortion;
+use crate::{ErrorKind, Result};
 
 /// 各データの末尾に埋め込まれる情報のサイズ.
 const LUMP_DATA_TRAILER_SIZE: usize = 2;
@@ -168,9 +168,9 @@ mod tests {
 
     use super::super::allocator::DataPortionAllocator;
     use super::*;
-    use block::BlockSize;
-    use metrics::DataAllocatorMetrics;
-    use nvm::MemoryNvm;
+    use crate::block::BlockSize;
+    use crate::metrics::DataAllocatorMetrics;
+    use crate::nvm::MemoryNvm;
 
     #[test]
     fn data_region_works() -> TestResult {

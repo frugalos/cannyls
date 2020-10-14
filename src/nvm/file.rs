@@ -1,14 +1,12 @@
-#[cfg(unix)]
-use libc;
 use std::cmp;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use block::BlockSize;
-use nvm::NonVolatileMemory;
-use storage::StorageHeader;
-use {ErrorKind, Result};
+use crate::block::BlockSize;
+use crate::nvm::NonVolatileMemory;
+use crate::storage::StorageHeader;
+use crate::{ErrorKind, Result};
 
 /// `FileNvm`のビルダ
 ///
@@ -442,8 +440,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use block::{AlignedBytes, BlockSize};
-    use storage::{StorageHeader, MAJOR_VERSION, MINOR_VERSION};
+    use crate::block::{AlignedBytes, BlockSize};
+    use crate::storage::{StorageHeader, MAJOR_VERSION, MINOR_VERSION};
 
     #[test]
     fn create_parent_directories_is_idempotent() -> TestResult {

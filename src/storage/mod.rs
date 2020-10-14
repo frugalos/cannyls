@@ -24,12 +24,12 @@ use self::data_region::DataRegion;
 use self::index::LumpIndex;
 use self::journal::JournalRegion;
 use self::portion::Portion;
-use block::BlockSize;
-use lump::{LumpData, LumpDataInner, LumpHeader, LumpId};
-use metrics::StorageMetrics;
-use nvm::NonVolatileMemory;
+use crate::block::BlockSize;
+use crate::lump::{LumpData, LumpDataInner, LumpHeader, LumpId};
+use crate::metrics::StorageMetrics;
+use crate::nvm::NonVolatileMemory;
 use std::ops::Range;
-use Result;
+use crate::Result;
 
 mod address;
 mod allocator;
@@ -431,10 +431,10 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use block::BlockSize;
-    use lump::{LumpData, LumpId};
-    use nvm::{FileNvm, SharedMemoryNvm};
-    use ErrorKind;
+    use crate::block::BlockSize;
+    use crate::lump::{LumpData, LumpId};
+    use crate::nvm::{FileNvm, SharedMemoryNvm};
+    use crate::ErrorKind;
 
     #[test]
     fn it_works() -> TestResult {

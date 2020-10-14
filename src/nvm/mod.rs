@@ -8,8 +8,8 @@ pub use self::file::{FileNvm, FileNvmBuilder};
 pub use self::memory::MemoryNvm;
 pub use self::shared_memory::SharedMemoryNvm;
 
-use block::{AlignedBytes, BlockSize};
-use {ErrorKind, Result};
+use crate::block::{AlignedBytes, BlockSize};
+use crate::{ErrorKind, Result};
 
 mod file;
 mod memory;

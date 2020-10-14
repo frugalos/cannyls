@@ -1,5 +1,5 @@
 //! ストレージやNVMのブロック(読み書きの際の最小単位)関連の構成要素.
-use {ErrorKind, Result};
+use crate::{ErrorKind, Result};
 
 pub(crate) use self::aligned_bytes::AlignedBytes;
 
