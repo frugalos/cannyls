@@ -11,9 +11,9 @@ use std::str::FromStr;
 use std::u128;
 use trackable::error::ErrorKindExt;
 
-use block::BlockSize;
-use storage::DataRegionLumpData;
-use {Error, ErrorKind, Result};
+use crate::block::BlockSize;
+use crate::storage::DataRegionLumpData;
+use crate::{Error, ErrorKind, Result};
 
 /// Lumpの識別子(128bit幅).
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]

@@ -70,11 +70,11 @@ extern crate uuid;
 #[macro_use]
 extern crate slog;
 
-pub use error::{Error, ErrorKind};
+pub use crate::error::{Error, ErrorKind};
 
 macro_rules! track_io {
     ($expr:expr) => {
-        $expr.map_err(|e: ::std::io::Error| track!(::Error::from(e)))
+        $expr.map_err(|e: ::std::io::Error| track!(crate::Error::from(e)))
     };
 }
 

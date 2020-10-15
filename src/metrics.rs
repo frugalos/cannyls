@@ -3,9 +3,9 @@
 //! [prometheus]: https://prometheus.io/
 use prometrics::metrics::{Counter, Gauge, MetricBuilder};
 
-use block::BlockSize;
-use device::{Command, DeviceStatus};
-use storage::{JournalRecord, StorageHeader};
+use crate::block::BlockSize;
+use crate::device::{Command, DeviceStatus};
+use crate::storage::{JournalRecord, StorageHeader};
 
 /// ジャーナル領域のキュー（リングバッファ）のメトリクス.
 #[derive(Debug, Clone)]

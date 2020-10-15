@@ -5,10 +5,10 @@ use std::ops::Range;
 use std::sync::mpsc::{Receiver, Sender};
 use trackable::error::ErrorKindExt;
 
-use deadline::Deadline;
-use lump::{LumpData, LumpHeader, LumpId};
-use storage::StorageUsage;
-use {Error, ErrorKind, Result};
+use crate::deadline::Deadline;
+use crate::lump::{LumpData, LumpHeader, LumpId};
+use crate::storage::StorageUsage;
+use crate::{Error, ErrorKind, Result};
 
 pub type CommandSender = Sender<Command>;
 pub type CommandReceiver = Receiver<Command>;

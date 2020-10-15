@@ -2,8 +2,8 @@ use std::cmp;
 use std::collections::BinaryHeap;
 use std::time::Instant;
 
-use deadline::Deadline;
-use device::command::Command;
+use crate::deadline::Deadline;
+use crate::device::command::Command;
 
 /// デバイスに発行されたコマンド群の管理キュー.
 ///
@@ -102,9 +102,9 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use deadline::Deadline;
-    use device::command::{Command, GetLump};
-    use lump::LumpId;
+    use crate::deadline::Deadline;
+    use crate::device::command::{Command, GetLump};
+    use crate::lump::LumpId;
 
     #[test]
     fn deadline_works() {

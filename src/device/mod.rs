@@ -21,12 +21,12 @@ pub use self::request::DeviceRequest;
 pub(crate) use self::command::Command; // `metrics`モジュール用に公開されている
 
 use self::thread::{DeviceThreadHandle, DeviceThreadMonitor};
-use deadline::Deadline;
-use lump::{LumpData, LumpId};
-use metrics::DeviceMetrics;
-use nvm::NonVolatileMemory;
-use storage::Storage;
-use {Error, Result};
+use crate::deadline::Deadline;
+use crate::lump::{LumpData, LumpId};
+use crate::metrics::DeviceMetrics;
+use crate::nvm::NonVolatileMemory;
+use crate::storage::Storage;
+use crate::{Error, Result};
 
 mod builder;
 mod command;
@@ -262,11 +262,11 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use lump::{LumpData, LumpId};
-    use nvm::{MemoryNvm, SharedMemoryNvm};
+    use crate::lump::{LumpData, LumpId};
+    use crate::nvm::{MemoryNvm, SharedMemoryNvm};
     use std::time::Duration;
-    use storage::StorageBuilder;
-    use ErrorKind;
+    use crate::storage::StorageBuilder;
+    use crate::ErrorKind;
 
     #[test]
     fn device_works() -> TestResult {

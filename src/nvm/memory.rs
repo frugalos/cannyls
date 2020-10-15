@@ -1,8 +1,8 @@
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
-use block::BlockSize;
-use nvm::NonVolatileMemory;
-use {ErrorKind, Result};
+use crate::block::BlockSize;
+use crate::nvm::NonVolatileMemory;
+use crate::{ErrorKind, Result};
 
 type Memory = Cursor<Vec<u8>>;
 
@@ -110,7 +110,7 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use nvm::NonVolatileMemory;
+    use crate::nvm::NonVolatileMemory;
 
     #[test]
     fn it_works() -> TestResult {

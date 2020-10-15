@@ -1,7 +1,7 @@
 //! Data Portion, Journal Portion, and Portion
 
-use block::BlockSize;
-use storage::Address;
+use crate::block::BlockSize;
+use crate::storage::Address;
 
 /// データ領域内の部分領域を示すための構造体.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -84,7 +84,7 @@ mod tests {
     use std::mem;
 
     use super::*;
-    use storage::Address;
+    use crate::storage::Address;
 
     #[test]
     fn it_works() {

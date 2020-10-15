@@ -9,15 +9,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
 
-use device::command::{Command, CommandReceiver, CommandSender};
-use device::long_queue_policy::LongQueuePolicy;
-use device::probabilistic::{Dropper, ProbabilisticDropper};
-use device::queue::DeadlineQueue;
-use device::{DeviceBuilder, DeviceStatus};
-use metrics::DeviceMetrics;
-use nvm::NonVolatileMemory;
-use storage::Storage;
-use {Error, ErrorKind, Result};
+use crate::device::command::{Command, CommandReceiver, CommandSender};
+use crate::device::long_queue_policy::LongQueuePolicy;
+use crate::device::probabilistic::{Dropper, ProbabilisticDropper};
+use crate::device::queue::DeadlineQueue;
+use crate::device::{DeviceBuilder, DeviceStatus};
+use crate::metrics::DeviceMetrics;
+use crate::nvm::NonVolatileMemory;
+use crate::storage::Storage;
+use crate::{Error, ErrorKind, Result};
 
 /// デバイスの実行スレッド.
 #[derive(Debug)]

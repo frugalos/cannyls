@@ -2,19 +2,19 @@ use prometrics::metrics::MetricBuilder;
 use std::io::SeekFrom;
 use uuid::Uuid;
 
-use block::BlockSize;
-use metrics::{DataAllocatorMetrics, StorageMetrics};
-use nvm::NonVolatileMemory;
-use storage::allocator::DataPortionAllocator;
-use storage::data_region::DataRegion;
-use storage::header::FULL_HEADER_SIZE;
-use storage::index::LumpIndex;
-use storage::journal::{JournalRegion, JournalRegionOptions};
-use storage::{
+use crate::block::BlockSize;
+use crate::metrics::{DataAllocatorMetrics, StorageMetrics};
+use crate::nvm::NonVolatileMemory;
+use crate::storage::allocator::DataPortionAllocator;
+use crate::storage::data_region::DataRegion;
+use crate::storage::header::FULL_HEADER_SIZE;
+use crate::storage::index::LumpIndex;
+use crate::storage::journal::{JournalRegion, JournalRegionOptions};
+use crate::storage::{
     Storage, StorageHeader, MAJOR_VERSION, MAX_DATA_REGION_SIZE, MAX_JOURNAL_REGION_SIZE,
     MINOR_VERSION,
 };
-use {ErrorKind, Result};
+use crate::{ErrorKind, Result};
 
 /// `Storage`のビルダ.
 #[derive(Debug, Clone)]

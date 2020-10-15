@@ -1,4 +1,4 @@
-use block::BlockSize;
+use crate::block::BlockSize;
 
 /// ジャーナル領域の挙動を調整するためのパラメータ群.
 ///

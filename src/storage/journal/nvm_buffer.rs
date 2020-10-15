@@ -2,9 +2,9 @@ use std::cmp;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ptr;
 
-use block::{AlignedBytes, BlockSize};
-use nvm::NonVolatileMemory;
-use {ErrorKind, Result};
+use crate::block::{AlignedBytes, BlockSize};
+use crate::nvm::NonVolatileMemory;
+use crate::{ErrorKind, Result};
 
 /// ジャーナル領域用のバッファ.
 ///
@@ -248,7 +248,7 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use nvm::MemoryNvm;
+    use crate::nvm::MemoryNvm;
 
     #[test]
     fn write_write_flush() -> TestResult {

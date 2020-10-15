@@ -1,6 +1,4 @@
-use std;
-
-use block::BlockSize;
+use crate::block::BlockSize;
 
 /// 指定のブロック境界に開始位置および終端位置が揃えられたバイト列.
 ///

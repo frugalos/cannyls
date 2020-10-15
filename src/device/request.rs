@@ -3,12 +3,12 @@ use std::ops::Range;
 use trackable::error::ErrorKindExt;
 
 use super::thread::DeviceThreadHandle;
-use deadline::Deadline;
-use device::command::{self, Command};
-use device::DeviceStatus;
-use lump::{LumpData, LumpHeader, LumpId};
-use storage::StorageUsage;
-use {Error, ErrorKind, Result};
+use crate::deadline::Deadline;
+use crate::device::command::{self, Command};
+use crate::device::DeviceStatus;
+use crate::lump::{LumpData, LumpHeader, LumpId};
+use crate::storage::StorageUsage;
+use crate::{Error, ErrorKind, Result};
 
 /// デバイスに対してリクエストを発行するためのビルダ.
 ///

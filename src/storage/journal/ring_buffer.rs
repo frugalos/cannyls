@@ -3,12 +3,12 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use super::record::{EMBEDDED_DATA_OFFSET, END_OF_RECORDS_SIZE};
 use super::{JournalEntry, JournalNvmBuffer, JournalRecord};
-use lump::LumpId;
-use metrics::JournalQueueMetrics;
-use nvm::NonVolatileMemory;
-use storage::portion::JournalPortion;
-use storage::Address;
-use {ErrorKind, Result};
+use crate::lump::LumpId;
+use crate::metrics::JournalQueueMetrics;
+use crate::nvm::NonVolatileMemory;
+use crate::storage::portion::JournalPortion;
+use crate::storage::Address;
+use crate::{ErrorKind, Result};
 
 /// ジャーナル領域用のリングバッファ.
 #[derive(Debug)]
@@ -356,10 +356,10 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use nvm::MemoryNvm;
-    use storage::portion::DataPortion;
-    use storage::{Address, JournalRecord};
-    use ErrorKind;
+    use crate::nvm::MemoryNvm;
+    use crate::storage::portion::DataPortion;
+    use crate::storage::{Address, JournalRecord};
+    use crate::ErrorKind;
 
     #[test]
     fn append_and_read_records() -> TestResult {

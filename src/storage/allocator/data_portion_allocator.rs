@@ -6,10 +6,10 @@ use std::collections::Bound::{Excluded, Included, Unbounded};
 
 use super::free_portion::{EndBasedFreePortion, FreePortion, SizeBasedFreePortion};
 use super::U24;
-use metrics::DataAllocatorMetrics;
-use storage::portion::DataPortion;
-use storage::Address;
-use {ErrorKind, Result};
+use crate::metrics::DataAllocatorMetrics;
+use crate::storage::portion::DataPortion;
+use crate::storage::Address;
+use crate::{ErrorKind, Result};
 
 /// データ領域用のアロケータ.
 ///
@@ -215,13 +215,13 @@ mod tests {
     use std::iter;
     use trackable::result::TestResult;
 
-    use block::BlockSize;
-    use lump::LumpId;
-    use metrics::DataAllocatorMetrics;
-    use storage::allocator::DataPortionAllocator;
-    use storage::index::LumpIndex;
-    use storage::portion::{DataPortion, Portion};
-    use storage::Address;
+    use crate::block::BlockSize;
+    use crate::lump::LumpId;
+    use crate::metrics::DataAllocatorMetrics;
+    use crate::storage::allocator::DataPortionAllocator;
+    use crate::storage::index::LumpIndex;
+    use crate::storage::portion::{DataPortion, Portion};
+    use crate::storage::Address;
 
     #[test]
     fn it_works() -> TestResult {

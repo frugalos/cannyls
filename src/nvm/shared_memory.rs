@@ -2,9 +2,9 @@ use std::cmp;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
-use block::BlockSize;
-use nvm::NonVolatileMemory;
-use {Error, ErrorKind, Result};
+use crate::block::BlockSize;
+use crate::nvm::NonVolatileMemory;
+use crate::{Error, ErrorKind, Result};
 
 /// インスタンスを共有可能な、メモリベースの`NonVolatileMemory`の実装.
 ///
@@ -162,7 +162,7 @@ mod tests {
     use trackable::result::TestResult;
 
     use super::*;
-    use nvm::NonVolatileMemory;
+    use crate::nvm::NonVolatileMemory;
 
     #[test]
     fn it_works() -> TestResult {
