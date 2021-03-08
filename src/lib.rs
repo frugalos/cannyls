@@ -56,9 +56,9 @@
 #![warn(missing_docs)]
 extern crate adler32;
 extern crate byteorder;
-extern crate fibers;
 #[cfg(test)]
 extern crate fibers_global;
+#[cfg(feature = "device")]
 extern crate futures;
 extern crate libc;
 extern crate prometrics;
@@ -68,6 +68,7 @@ extern crate tempdir;
 extern crate trackable;
 extern crate uuid;
 #[macro_use]
+#[cfg(feature = "device")]
 extern crate slog;
 
 pub use crate::error::{Error, ErrorKind};
@@ -80,6 +81,7 @@ macro_rules! track_io {
 
 pub mod block;
 pub mod deadline;
+#[cfg(feature = "device")]
 pub mod device;
 pub mod lump;
 pub mod metrics;
