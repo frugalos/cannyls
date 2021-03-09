@@ -264,9 +264,9 @@ mod tests {
     use super::*;
     use crate::lump::{LumpData, LumpId};
     use crate::nvm::{MemoryNvm, SharedMemoryNvm};
-    use std::time::Duration;
     use crate::storage::StorageBuilder;
     use crate::ErrorKind;
+    use std::time::Duration;
 
     #[test]
     fn device_works() -> TestResult {
@@ -565,7 +565,7 @@ mod tests {
                 .put(id(1234), embedded_data(b"hoge")),
         );
         // 新規に書かれたので true
-        assert!(result.unwrap(), true);
+        assert_eq!(result.unwrap(), true);
         // 2 回目は busy という理由で失敗する
         let result = execute(
             handle
