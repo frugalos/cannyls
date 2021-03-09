@@ -66,6 +66,8 @@ impl FileNvmBuilder {
         }
     }
     #[cfg(not(target_os = "macos"))]
+    // We cannot drop Result<...> in the return type because in the macos counterpart Result<...> must be present.
+    #[allow(clippy::unnecessary_wraps)]
     fn set_fnocache_if_flag_is_on(&self, _file: &File) -> Result<()> {
         Ok(())
     }
