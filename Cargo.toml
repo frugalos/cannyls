@@ -13,16 +13,27 @@ license = "MIT"
 [badges]
 travis-ci = {repository = "frugalos/cannyls"}
 
+[features]
+default = ["futures", "fibers"]
+
+device = ["futures", "fibers"]
+
 [dependencies]
 adler32 = "1"
 byteorder = { version = "1", features = ["i128"] }
-fibers = "0.1"
-futures = "0.1"
 libc = "0.2"
 prometrics = "0.1"
 trackable = "0.2"
 uuid = { version = "0.7", features = ["v4"] }
 slog = "2"
+
+[dependencies.futures]
+version = "0.1"
+optional = true
+
+[dependencies.fibers]
+version = "0.1"
+optional = true
 
 [dev-dependencies]
 fibers_global = "0.1"

@@ -4,6 +4,7 @@
 use prometrics::metrics::{Counter, Gauge, MetricBuilder};
 
 use crate::block::BlockSize;
+#[cfg(feature = "device")]
 use crate::device::{Command, DeviceStatus};
 use crate::storage::{JournalRecord, StorageHeader};
 
@@ -492,6 +493,7 @@ impl DataAllocatorMetrics {
 /// [`Device`]のメトリクス.
 ///
 /// [`Device`]: ../device/struct.Device.html
+#[cfg(feature = "device")]
 #[derive(Debug, Clone)]
 pub struct DeviceMetrics {
     pub(crate) status: Gauge,
@@ -502,6 +504,7 @@ pub struct DeviceMetrics {
     pub(crate) side_jobs: Counter,
     pub(crate) storage: Option<StorageMetrics>,
 }
+#[cfg(feature = "device")]
 impl DeviceMetrics {
     /// デバイスの稼働状態.
     ///
@@ -513,6 +516,7 @@ impl DeviceMetrics {
     /// # 2=running
     /// cannyls_device_status = 0|1|2
     /// ```
+    #[cfg(feature = "device")]
     pub fn status(&self) -> DeviceStatus {
         match self.status.value() as u8 {
             0 => DeviceStatus::Stopped,
@@ -658,6 +662,7 @@ impl DeviceMetrics {
 }
 
 /// デバイスのコマンド毎のカウンタ.
+#[cfg(feature = "device")]
 #[derive(Debug, Clone)]
 pub struct DeviceCommandCounter {
     pub(crate) put: Counter,
@@ -670,6 +675,7 @@ pub struct DeviceCommandCounter {
     pub(crate) usage_range: Counter,
     pub(crate) stop: Counter,
 }
+#[cfg(feature = "device")]
 impl DeviceCommandCounter {
     /// PUTコマンド用のカウンタの値を返す.
     pub fn put(&self) -> u64 {
@@ -738,6 +744,7 @@ impl DeviceCommandCounter {
         }
     }
 
+    #[cfg(feature = "device")]
     pub(crate) fn increment(&self, command: &Command) {
         match *command {
             Command::Put { .. } => self.put.increment(),
