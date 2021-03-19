@@ -2,7 +2,7 @@
 
 use std::cmp;
 use std::collections::BTreeSet;
-use std::collections::Bound::{Excluded, Included, Unbounded};
+use std::ops::Bound::{Excluded, Included, Unbounded};
 
 use super::free_portion::{EndBasedFreePortion, FreePortion, SizeBasedFreePortion};
 use super::U24;
