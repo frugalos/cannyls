@@ -11,7 +11,10 @@
 //!
 //! [ストレージ]: ../storage/index.html
 //! [Device]: struct.Device.html
-use futures::{Async, Future, Poll};
+use futures::future::{FutureExt, TryFutureExt};
+use futures::task::{Context, Poll};
+use futures::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 pub use self::builder::DeviceBuilder;
@@ -26,7 +29,7 @@ use crate::lump::{LumpData, LumpId};
 use crate::metrics::DeviceMetrics;
 use crate::nvm::NonVolatileMemory;
 use crate::storage::Storage;
-use crate::{Error, Result};
+use crate::Result;
 
 mod builder;
 mod command;
@@ -76,6 +79,7 @@ mod thread;
 /// use cannyls::nvm::MemoryNvm;
 /// use cannyls::storage::Storage;
 /// use futures::Future;
+/// use futures::executor::block_on;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
@@ -84,8 +88,8 @@ mod thread;
 ///
 /// // ...デバイスに対する何らかの操作...
 ///
-/// device.stop(Deadline::Immediate);    // 管理スレッドの停止を指示
-/// while !device.poll()?.is_ready() {}  // 停止完了を待機
+/// device.stop(Deadline::Immediate); // 管理スレッドの停止を指示
+/// block_on(device);                 // 停止完了を待機
 /// # Ok(())
 /// # }
 /// ```
@@ -134,10 +138,11 @@ impl Device {
     }
 
     /// デバイスの起動を待機するための`Future`を返す.
-    pub fn wait_for_running(self) -> impl Future<Item = Self, Error = Error> {
+    pub fn wait_for_running(self) -> impl Future<Output = Result<Self>> {
         let handle = self.handle();
         let future = handle.request().wait_for_running().head(LumpId::new(0)); // IDは何でも良い
-        track_err!(future.map(move |_| self))
+        let this: Result<Self> = Ok(self); // for type annotation
+        track_err!(future.map(move |_| this))
     }
 
     pub(crate) fn new(monitor: DeviceThreadMonitor, handle: DeviceHandle) -> Self {
@@ -149,11 +154,10 @@ impl Device {
     }
 }
 impl Future for Device {
-    type Item = ();
-    type Error = Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let result = track!(self.monitor.poll());
-        if let Ok(Async::NotReady) = result {
+    type Output = Result<()>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let result = track!(Pin::new(&mut self.monitor).poll(cx));
+        if result.is_pending() {
         } else {
             self.is_stopped = true;
         }
@@ -257,7 +261,6 @@ pub enum DeviceStatus {
 
 #[cfg(test)]
 mod tests {
-    use fibers_global::execute;
     use std::ops::Range;
     use trackable::result::TestResult;
 
@@ -268,216 +271,250 @@ mod tests {
     use crate::ErrorKind;
     use std::time::Duration;
 
-    #[test]
-    fn device_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn device_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
         let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
-        let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
+        let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
 
-        track!(execute(d.request().put(id(0), data(b"foo"))))?;
-        track!(execute(d.request().put(id(1), data(b"bar"))))?;
-        track!(execute(d.request().put(id(2), data(b"baz"))))?;
-        assert_eq!(
-            track!(execute(d.request().list()))?,
-            vec![id(0), id(1), id(2)]
-        );
+        track!(d.request().put(id(0), data(b"foo")).await)?;
+        track!(d.request().put(id(1), data(b"bar")).await)?;
+        track!(d.request().put(id(2), data(b"baz")).await)?;
+        assert_eq!(track!(d.request().list().await)?, vec![id(0), id(1), id(2)]);
 
-        assert_eq!(track!(execute(d.request().delete(id(1))))?, true);
-        assert_eq!(track!(execute(d.request().delete(id(1))))?, false);
-        assert_eq!(track!(execute(d.request().list()))?, vec![id(0), id(2)]);
+        assert_eq!(track!(d.request().delete(id(1)).await)?, true);
+        assert_eq!(track!(d.request().delete(id(1)).await)?, false);
+        assert_eq!(track!(d.request().list().await)?, vec![id(0), id(2)]);
         Ok(())
     }
 
-    #[test]
-    fn delete_range_all_data_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_range_all_data_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
         let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
-        let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
+        let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
 
-        track!(execute(d.request().put(id(0), data(b"foo"))))?;
-        track!(execute(d.request().put(id(1), data(b"bar"))))?;
-        track!(execute(d.request().put(id(2), data(b"baz"))))?;
-        assert_eq!(
-            track!(execute(d.request().list()))?,
-            vec![id(0), id(1), id(2)]
-        );
+        track!(d.request().put(id(0), data(b"foo")).await)?;
+        track!(d.request().put(id(1), data(b"bar")).await)?;
+        track!(d.request().put(id(2), data(b"baz")).await)?;
+        assert_eq!(track!(d.request().list().await)?, vec![id(0), id(1), id(2)]);
 
         assert_eq!(
-            track!(execute(d.request().delete_range(Range {
-                start: id(0),
-                end: id(3)
-            })))?,
+            track!(
+                d.request()
+                    .delete_range(Range {
+                        start: id(0),
+                        end: id(3)
+                    })
+                    .await
+            )?,
             vec![id(0), id(1), id(2)]
         );
-        assert_eq!(track!(execute(d.request().list()))?, vec![]);
+        assert_eq!(track!(d.request().list().await)?, vec![]);
         Ok(())
     }
 
-    #[test]
-    fn delete_range_no_data_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_range_no_data_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
         let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
-        let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
+        let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
 
-        track!(execute(d.request().put(id(0), data(b"foo"))))?;
-        track!(execute(d.request().put(id(1), data(b"bar"))))?;
-        track!(execute(d.request().put(id(2), data(b"baz"))))?;
-        assert_eq!(
-            track!(execute(d.request().list()))?,
-            vec![id(0), id(1), id(2)]
-        );
+        track!(d.request().put(id(0), data(b"foo")).await)?;
+        track!(d.request().put(id(1), data(b"bar")).await)?;
+        track!(d.request().put(id(2), data(b"baz")).await)?;
+        assert_eq!(track!(d.request().list().await)?, vec![id(0), id(1), id(2)]);
 
         assert_eq!(
-            track!(execute(d.request().delete_range(Range {
-                start: id(3),
-                end: id(9)
-            })))?,
+            track!(
+                d.request()
+                    .delete_range(Range {
+                        start: id(3),
+                        end: id(9)
+                    })
+                    .await
+            )?,
             vec![]
         );
-        assert_eq!(
-            track!(execute(d.request().list()))?,
-            vec![id(0), id(1), id(2)]
-        );
+        assert_eq!(track!(d.request().list().await)?, vec![id(0), id(1), id(2)]);
         Ok(())
     }
 
-    #[test]
-    fn delete_range_partial_data_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_range_partial_data_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
         let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
-        let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
+        let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
 
-        track!(execute(d.request().put(id(0), data(b"foo"))))?;
-        track!(execute(d.request().put(id(1), data(b"bar"))))?;
-        track!(execute(d.request().put(id(2), data(b"baz"))))?;
-        track!(execute(d.request().put(id(3), data(b"hoge"))))?;
+        track!(d.request().put(id(0), data(b"foo")).await)?;
+        track!(d.request().put(id(1), data(b"bar")).await)?;
+        track!(d.request().put(id(2), data(b"baz")).await)?;
+        track!(d.request().put(id(3), data(b"hoge")).await)?;
         assert_eq!(
-            track!(execute(d.request().list()))?,
+            track!(d.request().list().await)?,
             vec![id(0), id(1), id(2), id(3)]
         );
 
         assert_eq!(
-            track!(execute(d.request().delete_range(Range {
-                start: id(1),
-                end: id(3)
-            })))?,
+            track!(
+                d.request()
+                    .delete_range(Range {
+                        start: id(1),
+                        end: id(3)
+                    })
+                    .await
+            )?,
             vec![id(1), id(2)]
         );
-        assert_eq!(track!(execute(d.request().list()))?, vec![id(0), id(3)]);
+        assert_eq!(track!(d.request().list().await)?, vec![id(0), id(3)]);
         Ok(())
     }
 
-    #[test]
-    fn list_range_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_range_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
         let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
-        let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
+        let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
 
         // PUT
         for i in 2..7 {
-            track!(execute(
-                d.request().put(id(i), data(i.to_string().as_bytes()))
-            ))?;
+            track!(d.request().put(id(i), data(i.to_string().as_bytes())).await)?;
         }
         assert_eq!(
-            track!(execute(d.request().list()))?,
+            track!(d.request().list().await)?,
             vec![id(2), id(3), id(4), id(5), id(6)]
         );
 
         // 範囲取得: 重複範囲無し
         assert_eq!(
-            track!(execute(d.request().list_range(Range {
-                start: id(0),
-                end: id(2)
-            })))?,
+            track!(
+                d.request()
+                    .list_range(Range {
+                        start: id(0),
+                        end: id(2)
+                    })
+                    .await
+            )?,
             vec![]
         );
 
         // 範囲取得: 部分一致
         assert_eq!(
-            track!(execute(d.request().list_range(Range {
-                start: id(1),
-                end: id(5)
-            })))?,
+            track!(
+                d.request()
+                    .list_range(Range {
+                        start: id(1),
+                        end: id(5)
+                    })
+                    .await
+            )?,
             vec![id(2), id(3), id(4)]
         );
 
         // 範囲取得: 部分集合
         assert_eq!(
-            track!(execute(d.request().list_range(Range {
-                start: id(3),
-                end: id(4)
-            })))?,
+            track!(
+                d.request()
+                    .list_range(Range {
+                        start: id(3),
+                        end: id(4)
+                    })
+                    .await
+            )?,
             vec![id(3)]
         );
 
         // 範囲取得: 上位集合 (全lump取得)
         assert_eq!(
-            track!(execute(d.request().list_range(Range {
-                start: id(0),
-                end: id(10000)
-            })))?,
+            track!(
+                d.request()
+                    .list_range(Range {
+                        start: id(0),
+                        end: id(10000)
+                    })
+                    .await
+            )?,
             vec![id(2), id(3), id(4), id(5), id(6)]
         );
 
         Ok(())
     }
 
-    #[test]
-    fn usage_range_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn usage_range_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(StorageBuilder::new().journal_region_ratio(0.99).create(nvm))?;
         let header = storage.header().clone();
         let device = DeviceBuilder::new().spawn(|| Ok(storage));
         let d = device.handle();
-        let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
-        let usage = track!(execute(d.request().usage_range(Range {
-            start: id(0),
-            end: id(10)
-        })))?;
+        let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
+        let usage = track!(
+            d.request()
+                .usage_range(Range {
+                    start: id(0),
+                    end: id(10)
+                })
+                .await
+        )?;
         assert_eq!(512u16, header.block_size.as_u16());
         assert_eq!(0, usage.bytecount().unwrap());
         // 1 block(included)
-        track!(execute(d.request().put(id(0), data(&[0; 510]))))?;
+        track!(d.request().put(id(0), data(&[0; 510])).await)?;
         // 2 blocks(included)
-        track!(execute(d.request().put(id(1), data(&[0; 511]))))?;
+        track!(d.request().put(id(1), data(&[0; 511])).await)?;
         // 1 block(excluded)
-        track!(execute(d.request().put(id(12), data(b"baz"))))?;
-        let usage = track!(execute(d.request().usage_range(Range {
-            start: id(0),
-            end: id(0)
-        })))?;
+        track!(d.request().put(id(12), data(b"baz")).await)?;
+        let usage = track!(
+            d.request()
+                .usage_range(Range {
+                    start: id(0),
+                    end: id(0)
+                })
+                .await
+        )?;
         assert_eq!(0, usage.bytecount().unwrap());
-        let usage = track!(execute(d.request().usage_range(Range {
-            start: id(0),
-            end: id(1)
-        })))?;
+        let usage = track!(
+            d.request()
+                .usage_range(Range {
+                    start: id(0),
+                    end: id(1)
+                })
+                .await
+        )?;
         assert_eq!(
             header.block_size.as_u16(),
             usage.bytecount().unwrap() as u16
         );
-        let usage = track!(execute(d.request().usage_range(Range {
-            start: id(0),
-            end: id(10)
-        })))?;
+        let usage = track!(
+            d.request()
+                .usage_range(Range {
+                    start: id(0),
+                    end: id(10)
+                })
+                .await
+        )?;
         assert_eq!(
             header.block_size.as_u16() * 3,
             usage.bytecount().unwrap() as u16
         );
-        let usage = track!(execute(d.request().usage_range(Range {
-            start: id(0),
-            end: id(13)
-        })))?;
+        let usage = track!(
+            d.request()
+                .usage_range(Range {
+                    start: id(0),
+                    end: id(13)
+                })
+                .await
+        )?;
         assert_eq!(
             header.block_size.as_u16() * 4,
             usage.bytecount().unwrap() as u16
@@ -497,8 +534,8 @@ mod tests {
         LumpData::new_embedded(Vec::from(data)).unwrap()
     }
 
-    #[test]
-    fn journal_sync_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn journal_sync_works() -> TestResult {
         {
             let nvm = SharedMemoryNvm::new(vec![0; 1024 * 1024]);
             let storage = track!(StorageBuilder::new()
@@ -507,8 +544,8 @@ mod tests {
             let v = nvm.to_bytes();
             let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
-            let _ = execute(d.request().wait_for_running().list());
-            track!(execute(d.request().put(id(1234), embedded_data(b"hoge"))))?;
+            let _ = d.request().wait_for_running().list().await;
+            track!(d.request().put(id(1234), embedded_data(b"hoge")).await)?;
             assert_eq!(v, nvm.to_bytes()); // ジャーナルバッファ上に値があり、実際に書き込まれていない
         }
 
@@ -520,32 +557,33 @@ mod tests {
             let v = nvm.to_bytes();
             let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
-            let _ = execute(d.request().wait_for_running().list()); // デバイスの起動を待機
-            track!(execute(
+            let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
+            track!(
                 d.request()
                     .journal_sync()
                     .put(id(1234), embedded_data(b"hoge"))
-            ))?;
+                    .await
+            )?;
             assert_ne!(v, nvm.to_bytes()); // `journal_sync` により、実際に書き込まれている
         }
 
         Ok(())
     }
 
-    #[test]
-    fn device_stop_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn device_stop_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(Storage::create(nvm))?;
         let device = Device::spawn(|| Ok(storage));
 
         device.stop(Deadline::Immediate); // 管理スレッドの停止を指示
-        track!(execute(device))?; // 停止完了を待機
+        track!(device.await)?; // 停止完了を待機
 
         Ok(())
     }
 
-    #[test]
-    fn device_long_queue_policy_refuse_request_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn device_long_queue_policy_refuse_request_works() -> TestResult {
         // TODO: better testing
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(Storage::create(nvm))?;
@@ -558,40 +596,37 @@ mod tests {
         let handle = device.handle();
         // 1 回目は成功する。これは、拒否の判定タイミングがキューにリクエストを積む時で、その時初めて check_overload が呼ばれるため。
         // check_overload の初回呼び出しは決してエラーを返さない。
-        let result = execute(
-            handle
-                .request()
-                .wait_for_running()
-                .put(id(1234), embedded_data(b"hoge")),
-        );
+        let result = handle
+            .request()
+            .wait_for_running()
+            .put(id(1234), embedded_data(b"hoge"))
+            .await;
         // 新規に書かれたので true
         assert_eq!(result.unwrap(), true);
         // 2 回目は busy という理由で失敗する
-        let result = execute(
-            handle
-                .request()
-                .wait_for_running()
-                .put(id(1234), embedded_data(b"hoge")),
-        );
+        let result = handle
+            .request()
+            .wait_for_running()
+            .put(id(1234), embedded_data(b"hoge"))
+            .await;
         assert!(result.is_err());
         assert_eq!(*result.unwrap_err().kind(), ErrorKind::RequestRefused);
 
         // prioritized なリクエストはそのまま成功する
-        let result = execute(
-            handle
-                .request()
-                .wait_for_running()
-                .prioritized()
-                .put(id(1234), embedded_data(b"hoge")),
-        );
+        let result = handle
+            .request()
+            .wait_for_running()
+            .prioritized()
+            .put(id(1234), embedded_data(b"hoge"))
+            .await;
         // 上書きされたので false
         assert_eq!(result.unwrap(), false);
 
         Ok(())
     }
 
-    #[test]
-    fn device_long_queue_policy_refuse_request_works_2() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn device_long_queue_policy_refuse_request_works_2() -> TestResult {
         use std::sync::atomic::{AtomicU8, Ordering};
 
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
@@ -621,13 +656,12 @@ mod tests {
             let handle = handle.clone();
             let success = success.clone();
             let failure = failure.clone();
-            let join_handle = std::thread::spawn(move || {
-                let result = execute(
-                    handle
-                        .request()
-                        .wait_for_running()
-                        .put(id(1234), embedded_data(b"hoge")),
-                );
+            let join_handle = tokio::spawn(async move {
+                let request = handle
+                    .request()
+                    .wait_for_running()
+                    .put(id(1234), embedded_data(b"hoge"));
+                let result = request.await;
                 match result {
                     Ok(_) => {
                         success.fetch_add(1, Ordering::SeqCst);
@@ -648,9 +682,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
         tx.send(()).unwrap();
 
-        for join_handle in join_handles {
-            join_handle.join().unwrap();
-        }
+        futures::future::join_all(join_handles).await;
 
         // 成功 4 回、失敗 1 回
         assert_eq!(success.load(Ordering::SeqCst), 4);
@@ -659,8 +691,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn device_long_queue_policy_stop_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn device_long_queue_policy_stop_works() -> TestResult {
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
         let storage = track!(Storage::create(nvm))?;
         let device = DeviceBuilder::new()
@@ -671,19 +703,18 @@ mod tests {
 
         let handle = device.handle();
         // リクエストが処理される時には (キュー長) > 0 となってデバイスが落ちているため失敗する
-        let result = execute(
-            handle
-                .request()
-                .wait_for_running()
-                .put(id(1234), embedded_data(b"hoge")),
-        );
+        let result = handle
+            .request()
+            .wait_for_running()
+            .put(id(1234), embedded_data(b"hoge"))
+            .await;
         assert_eq!(*result.unwrap_err().kind(), ErrorKind::DeviceTerminated);
 
         Ok(())
     }
 
-    #[test]
-    fn device_long_queue_policy_drop_works() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn device_long_queue_policy_drop_works() -> TestResult {
         // TODO: 本当は キューに積む -> 処理される前にもう一度キューに積む -> 最初のリクエストが drop される -> 残りが処理される
         // というテストをやりたいのだが、面倒である。
         // ここのテストでも無いよりはマシ。
@@ -697,29 +728,27 @@ mod tests {
 
         let handle = device.handle();
         // リクエストが処理される時には (キュー長) > 0 となっているため drop される
-        let result = execute(
-            handle
-                .request()
-                .wait_for_running()
-                .put(id(1234), embedded_data(b"hoge")),
-        );
+        let result = handle
+            .request()
+            .wait_for_running()
+            .put(id(1234), embedded_data(b"hoge"))
+            .await;
         assert_eq!(*result.unwrap_err().kind(), ErrorKind::RequestDropped);
 
         // prioritized なリクエストはそのまま成功する
-        let result = execute(
-            handle
-                .request()
-                .wait_for_running()
-                .prioritized()
-                .put(id(1234), embedded_data(b"hoge")),
-        );
+        let result = handle
+            .request()
+            .wait_for_running()
+            .prioritized()
+            .put(id(1234), embedded_data(b"hoge"))
+            .await;
         assert_eq!(result.unwrap(), true);
 
         Ok(())
     }
 
-    #[test]
-    fn device_long_queue_policy_drop_works_2() -> TestResult {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn device_long_queue_policy_drop_works_2() -> TestResult {
         use std::sync::atomic::{AtomicU8, Ordering};
 
         let nvm = MemoryNvm::new(vec![0; 1024 * 1024]);
@@ -746,13 +775,12 @@ mod tests {
             let handle = handle.clone();
             let success = success.clone();
             let failure = failure.clone();
-            let join_handle = std::thread::spawn(move || {
-                let result = execute(
-                    handle
-                        .request()
-                        .wait_for_running()
-                        .put(id(1234), embedded_data(b"hoge")),
-                );
+            let join_handle = tokio::spawn(async move {
+                let request = handle
+                    .request()
+                    .wait_for_running()
+                    .put(id(1234), embedded_data(b"hoge"));
+                let result = request.await;
                 match result {
                     Ok(_) => {
                         success.fetch_add(1, Ordering::SeqCst);
@@ -773,9 +801,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
         tx.send(()).unwrap();
 
-        for join_handle in join_handles {
-            join_handle.join().unwrap();
-        }
+        let _ = futures::future::join_all(join_handles).await;
 
         // 成功 3 回、失敗 2 回
         assert_eq!(success.load(Ordering::SeqCst), 3);

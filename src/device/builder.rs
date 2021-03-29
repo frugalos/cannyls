@@ -5,9 +5,9 @@ use super::long_queue_policy::LongQueuePolicy;
 use super::thread::DeviceThread;
 use super::{Device, DeviceHandle};
 use crate::nvm::NonVolatileMemory;
-use slog::{Discard, Logger};
 use crate::storage::Storage;
 use crate::Result;
+use slog::{Discard, Logger};
 
 /// `Device`のビルダ.
 #[derive(Debug, Clone)]
