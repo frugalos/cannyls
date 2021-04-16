@@ -28,8 +28,8 @@ use crate::block::BlockSize;
 use crate::lump::{LumpData, LumpDataInner, LumpHeader, LumpId};
 use crate::metrics::StorageMetrics;
 use crate::nvm::NonVolatileMemory;
-use std::ops::Range;
 use crate::Result;
+use std::ops::Range;
 
 mod address;
 mod allocator;

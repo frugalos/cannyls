@@ -8,16 +8,9 @@ use crate::device::command::{self, Command};
 use crate::device::DeviceStatus;
 use crate::lump::{LumpData, LumpHeader, LumpId};
 use crate::storage::StorageUsage;
-use crate::{Error, ErrorKind, Result};
+use crate::{ErrorKind, Result};
 
 /// デバイスに対してリクエストを発行するためのビルダ.
-///
-/// # 注意
-///
-/// リクエストを発行した結果返される`Future`を効率的にポーリングするためには
-/// [`fibers`]を使用する必要がある。
-///
-/// [`fibers`]: https://github.com/dwango/fibers-rs
 #[derive(Debug)]
 pub struct DeviceRequest<'a> {
     device: &'a DeviceThreadHandle,
@@ -49,11 +42,7 @@ impl<'a> DeviceRequest<'a> {
     /// デバイスが管理しているストレージへの書き込み時に、
     /// データをストレージのブロック境界にアライメントするためのメモリコピーが余分に発生してしまう.
     /// それを避けたい場合には、`DeviceHandle::allocate_lump_data`メソッドを使用して`LumpData`を生成すると良い.
-    pub fn put(
-        &self,
-        lump_id: LumpId,
-        lump_data: LumpData,
-    ) -> impl Future<Item = bool, Error = Error> {
+    pub fn put(&self, lump_id: LumpId, lump_data: LumpData) -> impl Future<Output = Result<bool>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
         let (command, response) = command::PutLump::new(
@@ -68,7 +57,7 @@ impl<'a> DeviceRequest<'a> {
     }
 
     /// Lumpを取得する.
-    pub fn get(&self, lump_id: LumpId) -> impl Future<Item = Option<LumpData>, Error = Error> {
+    pub fn get(&self, lump_id: LumpId) -> impl Future<Output = Result<Option<LumpData>>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
 
@@ -78,7 +67,7 @@ impl<'a> DeviceRequest<'a> {
     }
 
     /// Lumpのヘッダを取得する.
-    pub fn head(&self, lump_id: LumpId) -> impl Future<Item = Option<LumpHeader>, Error = Error> {
+    pub fn head(&self, lump_id: LumpId) -> impl Future<Output = Result<Option<LumpHeader>>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
 
@@ -90,7 +79,7 @@ impl<'a> DeviceRequest<'a> {
     /// Lumpを削除する.
     ///
     /// 指定されたlumpが存在した場合には`true`が、しなかった場合には`false`が、結果として返される.
-    pub fn delete(&self, lump_id: LumpId) -> impl Future<Item = bool, Error = Error> {
+    pub fn delete(&self, lump_id: LumpId) -> impl Future<Output = Result<bool>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
 
@@ -104,10 +93,7 @@ impl<'a> DeviceRequest<'a> {
     ///
     /// 返り値のvectorは、引数rangeに含まれるlump idのうち、
     /// 対応するlump dataが存在して実際に削除されたもの全体を表す。
-    pub fn delete_range(
-        &self,
-        range: Range<LumpId>,
-    ) -> impl Future<Item = Vec<LumpId>, Error = Error> {
+    pub fn delete_range(&self, range: Range<LumpId>) -> impl Future<Output = Result<Vec<LumpId>>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
 
@@ -123,7 +109,7 @@ impl<'a> DeviceRequest<'a> {
     ///
     /// 例えば巨大なHDDを使用している場合には、lumpの数が数百万以上になることもあるため、
     /// このメソッドは呼び出す際には注意が必要.
-    pub fn list(&self) -> impl Future<Item = Vec<LumpId>, Error = Error> {
+    pub fn list(&self) -> impl Future<Output = Result<Vec<LumpId>>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
 
@@ -134,10 +120,7 @@ impl<'a> DeviceRequest<'a> {
 
     /// 範囲を指定してlump一覧を取得する.
     ///
-    pub fn list_range(
-        &self,
-        range: Range<LumpId>,
-    ) -> impl Future<Item = Vec<LumpId>, Error = Error> {
+    pub fn list_range(&self, range: Range<LumpId>) -> impl Future<Output = Result<Vec<LumpId>>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
 
@@ -148,10 +131,7 @@ impl<'a> DeviceRequest<'a> {
 
     /// 範囲を指定してlump数を取得する.
     ///
-    pub fn usage_range(
-        &self,
-        range: Range<LumpId>,
-    ) -> impl Future<Item = StorageUsage, Error = Error> {
+    pub fn usage_range(&self, range: Range<LumpId>) -> impl Future<Output = Result<StorageUsage>> {
         let deadline = self.deadline.unwrap_or_default();
         let prioritized = self.prioritized;
 

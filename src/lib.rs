@@ -56,9 +56,6 @@
 #![warn(missing_docs)]
 extern crate adler32;
 extern crate byteorder;
-extern crate fibers;
-#[cfg(test)]
-extern crate fibers_global;
 extern crate futures;
 extern crate libc;
 extern crate prometrics;

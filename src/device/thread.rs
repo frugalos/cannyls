@@ -1,10 +1,12 @@
-use fibers::sync::oneshot;
-use futures::{Future, Poll};
+use futures::channel::oneshot;
+use futures::{Future, FutureExt};
 use slog::Logger;
 use std::fmt::Debug;
+use std::pin::Pin;
 use std::sync::mpsc as std_mpsc;
 use std::sync::mpsc::{RecvTimeoutError, SendError};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
@@ -55,7 +57,7 @@ where
         metrics.status.set(f64::from(DeviceStatus::Starting as u8));
 
         let (command_tx, command_rx) = std_mpsc::channel();
-        let (monitored, monitor) = oneshot::monitor();
+        let (tx, rx) = oneshot::channel();
         let handle = DeviceThreadHandle {
             command_tx: command_tx.clone(),
             metrics: Arc::new(metrics.clone()),
@@ -94,10 +96,10 @@ where
             });
             metrics.status.set(f64::from(DeviceStatus::Stopped as u8));
             metrics.storage = None;
-            monitored.exit(result);
+            let _ = tx.send(result); // ignore error
         });
 
-        (handle, DeviceThreadMonitor(monitor))
+        (handle, DeviceThreadMonitor(rx))
     }
 
     fn run_once(&mut self) -> Result<bool> {
@@ -345,17 +347,17 @@ fn maybe_critical_error<T>(result: &Result<T>) -> Option<Error> {
 
 /// デバイスの実行スレッドの死活監視用オブジェクト.
 #[derive(Debug)]
-pub struct DeviceThreadMonitor(oneshot::Monitor<(), Error>);
+pub struct DeviceThreadMonitor(oneshot::Receiver<Result<()>>);
 impl Future for DeviceThreadMonitor {
-    type Item = ();
-    type Error = Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        track!(self
-            .0
-            .poll()
-            .map_err(|e| e.unwrap_or_else(|| ErrorKind::DeviceTerminated
-                .cause("`DeviceThread` terminated unintentionally")
-                .into())))
+    type Output = Result<()>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        track!(self.0.poll_unpin(cx).map(|result| match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => track!(Err(e)),
+            Err(_) => track!(Err(ErrorKind::DeviceTerminated
+                .cause("monitoring channel disconnected")
+                .into())),
+        }))
     }
 }
 

@@ -1,8 +1,11 @@
 //! デバイスに発行されるコマンド群の定義.
-use fibers::sync::oneshot;
-use futures::{Future, Poll};
+
+use futures::channel::oneshot;
+use futures::{Future, FutureExt};
 use std::ops::Range;
+use std::pin::Pin;
 use std::sync::mpsc::{Receiver, Sender};
+use std::task::{Context, Poll};
 use trackable::error::ErrorKindExt;
 
 use crate::deadline::Deadline;
@@ -69,32 +72,32 @@ impl Command {
 
 /// `Result`の非同期版.
 #[derive(Debug)]
-pub struct AsyncResult<T>(oneshot::Monitor<T, Error>);
+pub struct AsyncResult<T>(oneshot::Receiver<Result<T>>);
 impl<T> AsyncResult<T> {
     #[allow(clippy::new_ret_no_self)]
     fn new() -> (AsyncReply<T>, Self) {
-        let (tx, rx) = oneshot::monitor();
+        let (tx, rx) = oneshot::channel();
         (AsyncReply(tx), AsyncResult(rx))
     }
 }
 impl<T> Future for AsyncResult<T> {
-    type Item = T;
-    type Error = Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        track!(self
-            .0
-            .poll()
-            .map_err(|e| e.unwrap_or_else(|| ErrorKind::DeviceTerminated
+    type Output = Result<T>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        track!(self.0.poll_unpin(cx).map(|result| match result {
+            Ok(Ok(x)) => Ok(x),
+            Ok(Err(e)) => track!(Err(e)),
+            Err(_) => track!(Err(ErrorKind::DeviceTerminated
                 .cause("monitoring channel disconnected")
-                .into())))
+                .into())),
+        }))
     }
 }
 
 #[derive(Debug)]
-struct AsyncReply<T>(oneshot::Monitored<T, Error>);
+struct AsyncReply<T>(oneshot::Sender<Result<T>>);
 impl<T> AsyncReply<T> {
     fn send(self, result: Result<T>) {
-        self.0.exit(result);
+        let _ = self.0.send(result); // fails if the receiver has been dropped
     }
 }
 
