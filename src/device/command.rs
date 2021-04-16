@@ -1,11 +1,11 @@
 //! デバイスに発行されるコマンド群の定義.
 
 use futures::channel::oneshot;
-use futures::task::{Context, Poll};
 use futures::{Future, FutureExt};
 use std::ops::Range;
 use std::pin::Pin;
 use std::sync::mpsc::{Receiver, Sender};
+use std::task::{Context, Poll};
 use trackable::error::ErrorKindExt;
 
 use crate::deadline::Deadline;

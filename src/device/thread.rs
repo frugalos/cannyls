@@ -1,5 +1,4 @@
 use futures::channel::oneshot;
-use futures::task::{Context, Poll};
 use futures::{Future, FutureExt};
 use slog::Logger;
 use std::fmt::Debug;
@@ -7,6 +6,7 @@ use std::pin::Pin;
 use std::sync::mpsc as std_mpsc;
 use std::sync::mpsc::{RecvTimeoutError, SendError};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;

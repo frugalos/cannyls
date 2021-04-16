@@ -11,10 +11,10 @@
 //!
 //! [ストレージ]: ../storage/index.html
 //! [Device]: struct.Device.html
-use futures::task::{Context, Poll};
 use futures::{Future, FutureExt, TryFutureExt};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 pub use self::builder::DeviceBuilder;
 pub use self::long_queue_policy::LongQueuePolicy;
