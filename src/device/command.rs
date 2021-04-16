@@ -2,7 +2,7 @@
 
 use futures::channel::oneshot;
 use futures::task::{Context, Poll};
-use futures::Future;
+use futures::{Future, FutureExt};
 use std::ops::Range;
 use std::pin::Pin;
 use std::sync::mpsc::{Receiver, Sender};
@@ -83,7 +83,7 @@ impl<T> AsyncResult<T> {
 impl<T> Future for AsyncResult<T> {
     type Output = Result<T>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        track!(Pin::new(&mut self.0).poll(cx).map(|result| match result {
+        track!(self.0.poll_unpin(cx).map(|result| match result {
             Ok(Ok(x)) => Ok(x),
             Ok(Err(e)) => track!(Err(e)),
             Err(_) => track!(Err(ErrorKind::DeviceTerminated

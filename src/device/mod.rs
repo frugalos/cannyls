@@ -11,9 +11,8 @@
 //!
 //! [ストレージ]: ../storage/index.html
 //! [Device]: struct.Device.html
-use futures::future::{FutureExt, TryFutureExt};
 use futures::task::{Context, Poll};
-use futures::Future;
+use futures::{Future, FutureExt, TryFutureExt};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -156,7 +155,7 @@ impl Device {
 impl Future for Device {
     type Output = Result<()>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let result = track!(Pin::new(&mut self.monitor).poll(cx));
+        let result = track!(self.monitor.poll_unpin(cx));
         if result.is_pending() {
         } else {
             self.is_stopped = true;

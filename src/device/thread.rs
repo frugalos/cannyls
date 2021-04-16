@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use futures::task::{Context, Poll};
-use futures::Future;
+use futures::{Future, FutureExt};
 use slog::Logger;
 use std::fmt::Debug;
 use std::pin::Pin;
@@ -351,7 +351,7 @@ pub struct DeviceThreadMonitor(oneshot::Receiver<Result<()>>);
 impl Future for DeviceThreadMonitor {
     type Output = Result<()>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        track!(Pin::new(&mut self.0).poll(cx).map(|result| match result {
+        track!(self.0.poll_unpin(cx).map(|result| match result {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => track!(Err(e)),
             Err(_) => track!(Err(ErrorKind::DeviceTerminated
