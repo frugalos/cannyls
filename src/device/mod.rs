@@ -544,8 +544,10 @@ mod tests {
             let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
             let _ = d.request().wait_for_running().list().await;
+            let sync_count = nvm.sync_count();
             track!(d.request().put(id(1234), embedded_data(b"hoge")).await)?;
             assert_eq!(v, nvm.to_bytes()); // ジャーナルバッファ上に値があり、実際に書き込まれていない
+            assert_eq!(sync_count, nvm.sync_count());
         }
 
         {
@@ -557,13 +559,17 @@ mod tests {
             let device = DeviceBuilder::new().spawn(|| Ok(storage));
             let d = device.handle();
             let _ = d.request().wait_for_running().list().await; // デバイスの起動を待機
+            let sync_count = nvm.sync_count();
             track!(
                 d.request()
                     .journal_sync()
                     .put(id(1234), embedded_data(b"hoge"))
                     .await
             )?;
+            // `journal_sync` は caller に結果を返した後で実行されるので、 `journal_sync` が実行されるのを待たなければならない。
+            while nvm.sync_count() == sync_count {}
             assert_ne!(v, nvm.to_bytes()); // `journal_sync` により、実際に書き込まれている
+            assert_eq!(sync_count + 1, nvm.sync_count());
         }
 
         Ok(())
