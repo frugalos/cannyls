@@ -1,5 +1,6 @@
 use std::cmp;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::block::BlockSize;
@@ -19,6 +20,7 @@ pub struct SharedMemoryNvm {
     memory_end: usize,
     block_size: BlockSize,
     position: usize,
+    sync_count: Arc<AtomicI32>, // for testing
 }
 impl SharedMemoryNvm {
     /// 新しい`SharedMemoryNvm`インスタンスを生成する.
@@ -43,6 +45,7 @@ impl SharedMemoryNvm {
             memory_start: 0,
             memory_end,
             position: 0,
+            sync_count: Arc::new(AtomicI32::new(0)),
         }
     }
 
@@ -100,9 +103,17 @@ impl SharedMemoryNvm {
         self.position += size;
         Ok(())
     }
+
+    // How many times was `sync()` called?
+    // This function is provided on a best-effort basis: if two calls to self.sync_count() return the same value,
+    // it does not *guarantee* sync() was not called between these two calls.
+    pub fn sync_count(&self) -> i32 {
+        self.sync_count.load(Ordering::SeqCst)
+    }
 }
 impl NonVolatileMemory for SharedMemoryNvm {
     fn sync(&mut self) -> Result<()> {
+        self.sync_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     fn position(&self) -> u64 {
