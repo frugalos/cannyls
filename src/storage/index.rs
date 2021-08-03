@@ -36,7 +36,7 @@ impl LumpIndex {
 
     /// 指定されたlumpを検索する.
     pub fn get(&self, lump_id: &LumpId) -> Option<Portion> {
-        self.map.get(lump_id).map(|p| p.clone().into())
+        self.map.get(lump_id).map(|p| (*p).into())
     }
 
     /// 新規lumpを登録する.
@@ -79,8 +79,8 @@ pub struct DataPortions<'a>(btree_map::Values<'a, LumpId, PortionU64>);
 impl<'a> Iterator for DataPortions<'a> {
     type Item = DataPortion;
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(portion) = self.0.next() {
-            if let Portion::Data(portion) = portion.clone().into() {
+        for &portion in &mut self.0 {
+            if let Portion::Data(portion) = portion.into() {
                 return Some(portion);
             }
         }
