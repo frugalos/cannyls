@@ -25,7 +25,7 @@ Before creating a pull request, please make sure that the unit tests and benchma
 
 ```console
 $ cargo test
-$ cargo +nightly bench
+$ cargo +nightly bench --features device
 ```
 
 

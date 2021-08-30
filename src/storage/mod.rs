@@ -28,8 +28,8 @@ use crate::block::BlockSize;
 use crate::lump::{LumpData, LumpDataInner, LumpHeader, LumpId};
 use crate::metrics::StorageMetrics;
 use crate::nvm::NonVolatileMemory;
-use std::ops::Range;
 use crate::Result;
+use std::ops::Range;
 
 mod address;
 mod allocator;
@@ -486,10 +486,7 @@ mod tests {
         ))?;
         let mut storage = track!(Storage::create(nvm))?;
 
-        assert_eq!(
-            track!(storage.put(&id("000"), &zeroed_data(512 * 1024)))?,
-            true
-        );
+        assert!(track!(storage.put(&id("000"), &zeroed_data(512 * 1024)))?,);
         assert_eq!(
             storage.put(&id("000"), &zeroed_data(512 * 1024)).ok(),
             Some(false)
@@ -521,7 +518,7 @@ mod tests {
         let mut storage = track!(Storage::create(nvm))?;
 
         let data = zeroed_data(LumpData::MAX_SIZE);
-        assert_eq!(track!(storage.put(&id("000"), &data))?, true);
+        assert!(track!(storage.put(&id("000"), &data))?);
         assert_eq!(track!(storage.get(&id("000")))?, Some(data));
         Ok(())
     }

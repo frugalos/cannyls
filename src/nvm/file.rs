@@ -695,7 +695,7 @@ mod tests {
 
         // The following constant comes from
         // https://github.com/apple/darwin-xnu/blob/master/bsd/sys/fcntl.h#L133
-        let lock_flag = 0x4_000;
+        let lock_flag = 0x4000;
 
         (status & lock_flag) == lock_flag
     }
